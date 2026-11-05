@@ -32,3 +32,6 @@ dist-ssr
 .wrangler/
 .dev.vars
 .dev.vars.*
+
+# Private relational database, configuration and temporary decks
+.screening-data/

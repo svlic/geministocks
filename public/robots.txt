@@ -1,5 +1,2 @@
 User-agent: *
-Allow: /
-Disallow: /api/
-
-Sitemap: https://mastersgo.cc/sitemap.xml
+Disallow: /

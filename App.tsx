@@ -1,547 +1,594 @@
-import { parseStockContext, stockDraft, stockReturnUrl, type StockContext } from './utils/stockHandoff';
-
-import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
-import { HashRouter, Routes, Route } from 'react-router-dom';
-import { v4 as uuidv4 } from 'uuid';
-// Use streaming service with fallback to legacy
+import React, { useEffect, useRef, useState } from "react";
 import {
-  getAnalysisWithStreaming,
-  getPolymarketAnalysis
-} from './services/streamingService';
-import type { AnalysisReport, TopicHistoryEntry } from './types';
-import AnalysisInput from './components/AnalysisInput';
-import ExampleResearch from './components/ExampleResearch';
-import WorkspaceNav from './components/WorkspaceNav';
-import { ResearchIcon } from './components/icons/ResearchIcons';
-import AnalysisProgress from './components/AnalysisProgress';
-import { readStored, writeStored } from './utils/browserStorage';
-import AnalysisHistory from './components/AnalysisHistory';
-import { CacheStats } from './components/CacheStats';
-import AppHeader from './components/AppHeader';
-import LatestNews from './components/LatestNews';
-import { NEWS_SOURCES } from './services/newsService';
-import MarketThermometer from './components/MarketThermometer';
-import TacoMonitor from './components/TacoMonitor';
-import Toast from './components/Toast';
-import { useI18n } from './hooks/useI18n';
-import { isApiConfigured } from './services/apiConfigService';
-import { GitHubIcon } from './components/icons/Icons';
+  screeningResultSchema,
+  type ScreeningResult,
+} from "./shared/screening-schema";
+import ScreeningResultView, { type Lang } from "./components/ScreeningResult";
+import AdminSettings from "./components/AdminSettings";
+import {
+  screeningRequest,
+  uploadDeck,
+  type Session,
+  type Job,
+} from "./services/screeningClient";
 
-// Code-split heavy, interaction-gated components so they don't bloat the
-// initial bundle: modals only load when opened, the report only after an
-// analysis completes, and the About page only when routed to.
-const AnalysisResult = lazy(() => import('./components/AnalysisResult'));
-const ApiSettingsModal = lazy(() => import('./components/ApiSettingsModal'));
-const UserGuideModal = lazy(() => import('./components/UserGuideModal'));
-const ImageModal = lazy(() => import('./components/ImageModal'));
-const AboutPage = lazy(() => import('./components/AboutPage'));
-
-// --- Constants ---
-const TOPIC_HISTORY_STORAGE_KEY = 'gemini-analysis-history';
-const USER_ANALYSIS_COUNT_KEY = 'gemini-user-analysis-count';
-const USER_ID_KEY = 'gemini-user-id';
-const DRAFT_KEY = 'gemini-analysis-draft';
-
-
-// --- User Helper Functions ---
-const getUserId = (): string => {
-  try {
-    let userId = localStorage.getItem(USER_ID_KEY);
-    if (!userId) {
-      userId = uuidv4();
-      localStorage.setItem(USER_ID_KEY, userId);
-    }
-    return userId;
-  } catch (e) {
-    console.error("localStorage not available, using temporary ID.", e);
-    return uuidv4();
-  }
+const phases = [
+  "reading",
+  "identity",
+  "policy",
+  "research",
+  "scoring",
+  "output",
+];
+const phaseNames = {
+  en: [
+    "Read materials",
+    "Confirm identity",
+    "Match policy",
+    "Public research",
+    "Score and verify",
+    "Output",
+  ],
+  zh: [
+    "读取资料",
+    "确认项目身份",
+    "策略匹配",
+    "联网调查",
+    "评分与验证",
+    "输出",
+  ],
 };
-
-const MainPage: React.FC = () => {
-  const { t, locale } = useI18n();
-
-  // State for Topic Analysis
-  const [userInput, setUserInput] = useState<string>(() => readStored(DRAFT_KEY, '', (value): value is string => typeof value === 'string'));
-  const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [topicHistory, setTopicHistory] = useState<TopicHistoryEntry[]>([]);
-  const [topicProgress, setTopicProgress] = useState<number>(0);
-
-  const activeRequest = useRef<AbortController | null>(null);
-  const [reportTopic, setReportTopic] = useState('');
-  const [showExample, setShowExample] = useState(false);
-  const [incomingStock, setIncomingStock] = useState(() => parseStockContext(new URLSearchParams(window.location.hash.split('?')[1] || '').get('stock')));
-  const [stockContext, setStockContext] = useState<StockContext | null>(null);
-  const [linkedReport, setLinkedReport] = useState<{ context: StockContext; id: number } | null>(null);
-  const [reportLinkMissing, setReportLinkMissing] = useState(false);
-  const pendingAnalysis = useRef<{ topic: string; fresh: boolean; context: StockContext | null } | null>(null);
-  const [draftSaved, setDraftSaved] = useState(false);
-  const [deletedHistory, setDeletedHistory] = useState<TopicHistoryEntry[] | null>(null);
-  const [failedTopic, setFailedTopic] = useState('');
-  const statusRef = useRef<HTMLDivElement>(null);
-
+export default function App() {
+  const [lang, setLang] = useState<Lang>("zh");
+  const t = (en: string, zh: string) => (lang === "zh" ? zh : en);
+  const [session, setSession] = useState<Session | null>(null);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [admin, setAdmin] = useState(false);
+  const [website, setWebsite] = useState("");
+  const [note, setNote] = useState("");
+  const [stage, setStage] = useState("unknown");
+  const [file, setFile] = useState<File | null>(null);
+  const [scenario, setScenario] = useState("standard");
+  const [locked, setLocked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState<Job | null>(null);
+  const [result, setResult] = useState<ScreeningResult | null>(null);
+  const [pollRetry, setPollRetry] = useState(0);
+  const [cancelling, setCancelling] = useState(false);
+  const generation = useRef(0);
   useEffect(() => {
-    setDraftSaved(false);
-    const timer = setTimeout(() => setDraftSaved(writeStored(DRAFT_KEY, userInput)), 300);
-    return () => { clearTimeout(timer); writeStored(DRAFT_KEY, userInput); };
-  }, [userInput]);
-  useEffect(() => () => { activeRequest.current?.abort(); }, []);
-  useEffect(() => {
-    if (isLoading || error || analysisReport) statusRef.current?.focus({ preventScroll: true });
-  }, [isLoading, error, analysisReport]);
-
-  // Common State
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
-  const [userAnalysisCount, setUserAnalysisCount] = useState<number>(0);
-  const [isUserGuideModalOpen, setIsUserGuideModalOpen] = useState(false);
-  const [isImageModalOpen, setIsImageModalOpen] = useState(false);
-
-  // User API Settings State
-  const [isApiSettingsOpen, setIsApiSettingsOpen] = useState(false);
-  const [apiConfigured, setApiConfigured] = useState<boolean>(false);
-
-
-
-  // Effect to hide toast after a delay
-  useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => {
-        setToast(null);
-      }, 5000); // 5 seconds
-      return () => clearTimeout(timer);
-    }
-  }, [toast]);
-
-  useEffect(() => {
-    const section = new URLSearchParams(window.location.hash.split('?')[1] || '').get('section');
-    if (section === 'settings') setIsApiSettingsOpen(true);
-    if (section === 'history') requestAnimationFrame(() => openHistory());
-    // Initialize user ID (for anonymous users)
-    getUserId();
-
-    // Check whether the user has configured their API settings
-    setApiConfigured(isApiConfigured());
-
-    const storedHistory = readStored<TopicHistoryEntry[]>(TOPIC_HISTORY_STORAGE_KEY, [],
-      (value): value is TopicHistoryEntry[] => Array.isArray(value) && value.every(entry =>
-        entry && Number.isSafeInteger(entry.id) && entry.id > 0 && typeof entry.topic === 'string' && entry.report && typeof entry.report === 'object'));
-    setTopicHistory(storedHistory);
-    const reportId = Number(new URLSearchParams(window.location.hash.split('?')[1] || '').get('report'));
-    if (Number.isSafeInteger(reportId) && reportId > 0) {
-      const entry = storedHistory.find(item => item.id === reportId);
-      if (entry) {
-        setAnalysisReport(entry.report); setReportTopic(entry.topic);
-        const context = parseStockContext(JSON.stringify(entry.stockContext));
-        if (context) setLinkedReport({ context, id: entry.id });
-      } else setReportLinkMissing(true);
-    }
-    setUserAnalysisCount(readStored(USER_ANALYSIS_COUNT_KEY, 0,
-      (value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0));
-
+    let active = true;
+    screeningRequest<Session>("/api/auth/me")
+      .then((s) => {
+        if (active) setSession(s);
+      })
+      .catch((e) => {
+        if (active) setError(e.message);
+      })
+      .finally(() => {
+        if (active) setReady(true);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
-
-
-
-  // SEO: Set meta tags and html lang
   useEffect(() => {
-    document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en-US';
-    const title = t('meta.title');
-    const description = t('meta.description');
-    const ogTitle = t('meta.ogTitle');
-    const ogDescription = t('meta.ogDescription');
-
-    document.title = title;
-    document.querySelector('meta[name="description"]')?.setAttribute('content', description);
-    document.querySelector('meta[property="og:title"]')?.setAttribute('content', ogTitle);
-    document.querySelector('meta[property="og:description"]')?.setAttribute('content', ogDescription);
-    document.querySelector('meta[name="twitter:title"]')?.setAttribute('content', ogTitle);
-    document.querySelector('meta[name="twitter:description"]')?.setAttribute('content', ogDescription);
-  }, [locale, t]);
-
-  // Require user API configuration before any analysis; open settings modal if missing
-  const ensureApiConfigured = (): boolean => {
-    if (isApiConfigured()) return true;
-    setIsApiSettingsOpen(true);
-    setToast({ message: locale === 'zh' ? '请先配置模型 API 地址和密钥' : 'Please configure your model API settings first', type: 'info' });
-    return false;
-  };
-
-
-  const updateTopicHistory = (newHistory: TopicHistoryEntry[]) => {
-    setTopicHistory(newHistory);
-    const stored = writeStored(TOPIC_HISTORY_STORAGE_KEY, newHistory);
-    if (!stored) {
-      setToast({ message: locale === 'zh' ? '浏览器存储已满或不可用。报告仍可查看，请及时导出。' : 'Browser storage is full or unavailable. Your report is still available; export it to keep a copy.', type: 'info' });
-    }
-    return stored;
-  };
-
-  const incrementUserAnalysisCount = () => {
-    setUserAnalysisCount(prevCount => {
-        const newCount = prevCount + 1;
-        writeStored(USER_ANALYSIS_COUNT_KEY, newCount);
-        return newCount;
-    });
-  };
-
-  const handleClearAllResults = () => {
-      setShowExample(false);
-      setAnalysisReport(null);
-      setError(null);
-  }
-
-  const handleAnalyze = useCallback(async (topic: string, fresh = false, contextOverride?: StockContext | null) => {
-    const analysisContext = contextOverride === undefined ? stockContext : contextOverride;
-    if (activeRequest.current) return;
-    topic = topic.trim();
-    if (!topic.trim()) { setError(t('errors.emptyTopic')); return; }
-    if (!ensureApiConfigured()) { pendingAnalysis.current = { topic, fresh, context: analysisContext }; return; }
-    setShowExample(false);
-
-    const controller = new AbortController();
-    activeRequest.current = controller;
-    setIsLoading(true);
-    setError(null);
-    setFailedTopic(topic);
-    setTopicProgress(0);
-
-    try {
-        const isPolymarketUrl = /^https?:\/\/polymarket\.com\//.test(topic.trim());
-
-        let report: AnalysisReport;
-        if (isPolymarketUrl) {
-            report = await getPolymarketAnalysis(topic, locale, controller.signal);
-        } else {
-            report = await getAnalysisWithStreaming(topic, step => {
-              if (activeRequest.current === controller) setTopicProgress(step);
-            }, locale, undefined, { signal: controller.signal, fresh });
-        }
-
-        if (activeRequest.current !== controller) return;
-        setAnalysisReport(report);
-        setReportTopic(topic);
-        incrementUserAnalysisCount();
-
-        const newEntry: TopicHistoryEntry = { id: Date.now(), topic, report, ...(analysisContext ? { stockContext: analysisContext } : {}) };
-        const newHistory = [newEntry, ...topicHistory].slice(0, 20);
-        const stored = updateTopicHistory(newHistory);
-        setLinkedReport(stored && analysisContext ? { context: analysisContext, id: newEntry.id } : null);
-    } catch (err) {
-        if (activeRequest.current !== controller || controller.signal.aborted) return;
-        controller.abort();
-        console.error(err);
-        const errorMessage = err instanceof Error ? t('errors.analysisFailed', { message: err.message }) : t('errors.unknownError');
-        setError(errorMessage);
-    } finally {
-        if (activeRequest.current === controller) {
-          activeRequest.current = null;
-          setIsLoading(false);
-          setTopicProgress(0);
-        }
-    }
-  }, [topicHistory, locale, t, stockContext]);
-
-  const handleCancel = () => {
-    activeRequest.current?.abort();
-    activeRequest.current = null;
-    setIsLoading(false);
-    setTopicProgress(0);
-    setToast({ message: locale === 'zh' ? '已停止等待，输入内容已保留。服务商可能仍处理已接收的请求。' : 'Stopped waiting. Your input is preserved. The provider may still process accepted requests.', type: 'info' });
-  };
-
-  const handleNewsSelect = (newsTopic: string) => {
-    setUserInput(newsTopic);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    handleAnalyze(newsTopic);
-  };
-
-  const handleNewAnalysis = () => {
-    handleClearAllResults();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-
-  // --- History Handlers ---
-
-  const handleSelectTopicHistory = (id: number) => {
-    const entry = topicHistory.find((e) => e.id === id);
-    if (!entry) return;
-    setUserInput(entry.topic);
-    handleClearAllResults();
-    setAnalysisReport(entry.report);
-    setReportTopic(entry.topic);
-    const context = parseStockContext(JSON.stringify(entry.stockContext));
-    setLinkedReport(context ? { context, id: entry.id } : null);
-    setStockContext(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleDeleteTopicHistory = (id: number) => {
-    setDeletedHistory(topicHistory);
-    const newHistory = topicHistory.filter((entry) => entry.id !== id);
-    updateTopicHistory(newHistory);
-  };
-
-  // Re-run the analysis for a past topic with fresh data (adds a new history entry)
-  const handleReanalyzeTopicHistory = (id: number) => {
-    const entry = topicHistory.find((e) => e.id === id);
-    if (!entry) return;
-    setUserInput(entry.topic);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    handleAnalyze(entry.topic, true, parseStockContext(JSON.stringify(entry.stockContext)));
-  };
-
-  const handleClearTopicHistory = () => {
-    setDeletedHistory(topicHistory);
-    updateTopicHistory([]);
-  };
-
-  const handleUndoHistory = () => {
-    if (!deletedHistory) return;
-    const restored = new Map([...deletedHistory, ...topicHistory].map(entry => [entry.id, entry]));
-    updateTopicHistory(Array.from(restored.values()).sort((a, b) => b.id - a.id).slice(0, 20));
-    setDeletedHistory(null);
-  };
-
-
-  const isLoadingAny = isLoading;
-
-  const openNews = () => {
-    if (isLoadingAny) return;
-    handleClearAllResults();
-    requestAnimationFrame(() => document.getElementById('workspace-news')?.scrollIntoView({ block: 'start' }));
-  };
-  const openHistory = () => {
-    const history = document.getElementById('research-history');
-    history?.scrollIntoView({ block: 'start' });
-    history?.focus();
-    history?.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click();
-  };
-
-
-  return (
-    <>
-      <CacheStats />
-      {isUserGuideModalOpen && (
-        <Suspense fallback={null}>
-          <UserGuideModal isOpen={isUserGuideModalOpen} onClose={() => setIsUserGuideModalOpen(false)} />
-        </Suspense>
-      )}
-      {isApiSettingsOpen && (
-        <Suspense fallback={null}>
-          <ApiSettingsModal
-            startAfterSave={Boolean(pendingAnalysis.current)}
-            isOpen={isApiSettingsOpen}
-            onClose={() => { pendingAnalysis.current = null; setIsApiSettingsOpen(false); setApiConfigured(isApiConfigured()); }}
-            onSaved={() => {
-              setApiConfigured(isApiConfigured());
-              const pending = pendingAnalysis.current;
-              pendingAnalysis.current = null;
-              if (pending) {
-                setIsApiSettingsOpen(false);
-                void handleAnalyze(pending.topic, pending.fresh, pending.context);
-                return;
-              }
-              setToast({
-                message: locale === 'zh' ? '模型已配置成功，现在可以开始分析了' : 'Model configured successfully. You can start analyzing now.',
-                type: 'success',
-              });
-            }}
-          />
-        </Suspense>
-      )}
-      {toast && <Toast message={toast.message} type={toast.type} />}
-      {isImageModalOpen && (
-          <Suspense fallback={null}>
-            <ImageModal
-                imageUrl="https://youke1.picui.cn/s1/2025/10/02/68de9d3a88ef4.jpg"
-                onClose={() => setIsImageModalOpen(false)}
-                title={t('imageModal.title')}
-            />
-          </Suspense>
-      )}
-      <div className="min-h-screen relative z-10 research-app">
-        <WorkspaceNav busy={isLoadingAny} onSettings={() => setIsApiSettingsOpen(true)} onNews={openNews} onHistory={openHistory} />
-        <AppHeader
-          busy={isLoadingAny}
-          onNews={openNews}
-          onHistory={openHistory}
-          apiConfigured={apiConfigured}
-          onOpenUserGuide={() => setIsUserGuideModalOpen(true)}
-          onOpenApiSettings={() => setIsApiSettingsOpen(true)}
-        />
-
-        <div className="workspace-main">
-          <main id="main-content">
-            {incomingStock && <section className="stock-handoff" aria-label="来自股票池的研究">
-              <strong>从产业图谱带入 · {incomingStock.company}（{incomingStock.ticker}）</strong>
-              <p>{incomingStock.theme} · {incomingStock.question}</p>
-              <p>载入将替换当前草稿；确认内容后再开始分析。</p>
-              <button onClick={() => { setUserInput(stockDraft(incomingStock)); setStockContext(incomingStock); setIncomingStock(null); handleClearAllResults(); }}>载入研究草稿</button>
-              <button onClick={() => setIncomingStock(null)}>保留当前草稿</button>
-            </section>}
-            {stockContext && <div className="stock-handoff"><span>当前研究关联：{stockContext.company}（{stockContext.ticker}）</span><button onClick={() => setStockContext(null)}>解除关联</button><a href={stockReturnUrl(stockContext)}>返回股票池 ↗</a></div>}
-            {reportLinkMissing && <p className="stock-handoff" role="status">此浏览器找不到该报告。报告保存在生成时的浏览器中，可能已删除或来自其他设备。</p>}
-
-            <a href="#news-input" onClick={event => { event.preventDefault(); document.getElementById('news-input')?.focus(); }} className="sr-only focus:not-sr-only focus:block focus:mb-4">{locale === 'zh' ? '跳到分析输入' : 'Skip to analysis input'}</a>
-            <section className="workspace-intro mb-6 py-3 sm:py-5" aria-label={locale === 'zh' ? '开始研究' : 'Start researching'}>
-              <p className="text-xs font-semibold tracking-widest text-amber-800">{locale === 'zh' ? '从信息，到有依据的判断' : 'FROM INFORMATION TO INFORMED JUDGMENT'}</p>
-              <h2 className="mt-3 max-w-3xl text-3xl sm:text-4xl font-semibold leading-tight text-stone-950 text-balance">{locale === 'zh' ? '从一条线索，开始深入研究。' : 'Turn a news story into your next research question.'}</h2>
-              <p className="mt-3 max-w-2xl text-base leading-7 text-stone-600">{locale === 'zh' ? '梳理影响路径，核对证据，找到下一步。' : 'Explore related companies, impact paths and open questions. Start with an example, then research what matters to you.'}</p>
-              <button disabled={isLoading} onClick={() => { setError(null); setShowExample(true); requestAnimationFrame(() => document.getElementById('example-research')?.scrollIntoView({ block: 'start' })); }} className="mt-3 min-h-11 text-sm font-semibold text-amber-800 underline underline-offset-4 disabled:opacity-50">{locale === 'zh' ? '查看示例报告 · 无需配置' : 'View example report · No setup needed'}</button>
-            </section>
-            {showExample && <div id="example-research" className="mb-6 scroll-mt-6"><ExampleResearch onClose={() => setShowExample(false)} onUseTopic={() => { setShowExample(false); setUserInput(locale === 'zh' ? 'AI 数据中心扩建，会影响哪些产业链？有哪些证据需要验证？' : 'How does AI data center expansion affect suppliers, and what evidence should I verify?'); document.getElementById('news-input')?.focus(); }} /></div>}
-
-            <div className={`workspace-grid ${!isLoadingAny && !error && !analysisReport ? 'workspace-grid-idle' : ''}`}>
-                {/* --- INPUT --- */}
-                <div id="workspace-news" className="workspace-news space-y-6 scroll-mt-24">
-                    <AnalysisInput
-                      userInput={userInput}
-                      setUserInput={setUserInput}
-                      onAnalyze={(topic) => handleAnalyze(topic ?? userInput)}
-                      isLoading={isLoading}
-                      apiConfigured={apiConfigured}
-                      draftSaved={draftSaved}
-                      onConfigure={() => setIsApiSettingsOpen(true)}
-                    />
-                </div>
-                {!isLoadingAny && !analysisReport && !showExample && <button className="research-example-teaser" onClick={() => { setShowExample(true); requestAnimationFrame(() => document.getElementById('example-research')?.scrollIntoView({ block: 'start' })); }}>
-                  <ResearchIcon name="evidence" className="w-8 h-8"/><span><small>{locale === 'zh' ? '示例研究 · 非实时' : 'Example · Not live'}</small><strong>{locale === 'zh' ? 'AI 数据中心扩建，该关注什么？' : 'What matters in an AI data center expansion?'}</strong><span>{locale === 'zh' ? '事件 → 影响路径 → 待验证' : 'Event → Impact → Verification'}</span></span><ResearchIcon name="arrow" className="w-5 h-5 ml-auto"/>
-                </button>}
-
-                {!isLoading && <div id="research-history" tabIndex={-1} className="workspace-history scroll-mt-24 outline-none">
-                  {!topicHistory.length && <p className="history-empty"><ResearchIcon name="history" className="w-5 h-5" />{locale === 'zh' ? '研究记录会保存在此浏览器，方便随时回看。' : 'Research history is saved in this browser for later review.'}</p>}
-                  {deletedHistory && <div role="status" className="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50 p-4 text-sm">
-                    <span>{locale === 'zh' ? '历史记录已删除' : 'History removed'}</span>
-                    <button className="min-h-11 px-3 font-semibold underline" onClick={handleUndoHistory}>{locale === 'zh' ? '撤销删除' : 'Undo deletion'}</button>
-                  </div>}
-                     <AnalysisHistory
-                        history={topicHistory.map(h => ({
-                          id: h.id,
-                          text: h.topic,
-                          score: h.report?.investmentScore?.score,
-                          gapScore: h.report?.informationGapScore?.score,
-                        }))}
-                        onSelect={handleSelectTopicHistory}
-                        onDelete={handleDeleteTopicHistory}
-                        onClear={handleClearTopicHistory}
-                        onReanalyze={handleReanalyzeTopicHistory}
-                      />
-                </div>}
-
-                {/* --- RESULTS / DASHBOARD --- */}
-                <div ref={statusRef} tabIndex={-1} role="region" aria-label={locale === 'zh' ? '分析结果与状态' : 'Analysis results and status'} className="workspace-results outline-none scroll-mt-24">
-                {isLoadingAny ? (
-                  <AnalysisProgress completed={topicProgress} onCancel={handleCancel} prediction={/^https?:\/\/polymarket\.com\//.test(failedTopic)} />
-                ) : error ? (
-                    <div role="alert" className="bg-red-50 border-2 border-red-200 text-red-800 px-6 py-4 text-center rounded-lg">
-                        <p className="font-semibold">{t('errors.title')}</p>
-                        <p className="text-sm mt-1 break-words">{error}</p>
-                        <p className="mt-2 text-sm">{locale === 'zh' ? '你的输入已保留，可以重试或调整模型设置。' : 'Your input is preserved. Retry or adjust your model settings.'}</p>
-                        <div className="mt-4 flex flex-wrap justify-center gap-3">
-                          <button onClick={() => handleAnalyze(failedTopic, true)} className="min-h-11 rounded-xl bg-red-800 px-4 text-sm font-medium text-white">{locale === 'zh' ? '重试分析' : 'Retry analysis'}</button>
-                          <button onClick={() => setIsApiSettingsOpen(true)} className="min-h-11 rounded-xl border border-red-300 px-4 text-sm">{locale === 'zh' ? '检查模型设置' : 'Model settings'}</button>
-                          {analysisReport && <button onClick={() => setError(null)} className="min-h-11 px-4 text-sm underline">{locale === 'zh' ? '返回上一份报告' : 'Return to previous report'}</button>}
-                        </div>
-                    </div>
-                ) : analysisReport ? (
-                  <>
-                    {linkedReport && <div className="stock-handoff"><strong>研究完成 · {linkedReport.context.ticker}</strong><p>将报告入口带回股票池；完整报告保存在当前浏览器，不会上传到股票池。</p><a href={stockReturnUrl(linkedReport.context, linkedReport.id)}>关联报告并返回股票池 ↗</a></div>}
-                    <Suspense fallback={<p role="status" className="p-6 text-center text-sm text-stone-500">{locale === 'zh' ? '正在打开报告…' : 'Opening your report…'}</p>}>
-                      <AnalysisResult
-                          report={analysisReport}
-                          userInput={reportTopic}
-                          onNewAnalysis={handleNewAnalysis}
-                      />
-                    </Suspense>
-                  </>
-                ) : (
-                  // Offer readable news before the deeper market indicators.
-                  <div id="workspace-news" className="workspace-news space-y-6 scroll-mt-24">
-                    <div className="grid grid-cols-1 gap-8 items-start">
-                      <LatestNews
-                        onAnalyze={handleNewsSelect}
-                        sources={NEWS_SOURCES}
-                      />
-                    </div>
-                    <details className="rounded-2xl border border-stone-200 bg-stone-50 p-5"><summary className="cursor-pointer font-semibold text-stone-700">{locale === 'zh' ? '市场环境 · 情绪与政策监测' : 'Market context · Sentiment and policy'}</summary><p className="my-3 text-sm text-stone-600">{locale === 'zh' ? '按需扫描，辅助理解市场背景。' : 'Scan on demand for market context.'}</p><div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-                      <MarketThermometer sources={NEWS_SOURCES} />
-                      <TacoMonitor sources={NEWS_SOURCES} />
-                    </div></details>
-
-
-                  </div>
-                )}
-                </div>
-
-            </div>
-          </main>
-
-          <footer className="text-center mt-16 py-8 border-t border-gray-200">
-             <div className="flex flex-wrap justify-center items-center gap-3 mb-6">
-                <span className="text-sm text-gray-500">{t('footer.deployOwn')}</span>
-                <a
-                  href="https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fyaoleifly%2Fgeministocks"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-black text-white hover:bg-gray-800 transition-colors"
-                  title={t('footer.deployVercelHint')}
-                >
-                  <svg viewBox="0 0 76 65" className="w-3 h-3" fill="currentColor" aria-hidden="true">
-                    <path d="M37.5274 0L75.0548 65H0L37.5274 0Z" />
-                  </svg>
-                  {t('footer.deployVercel')}
-                </a>
-                <a
-                  href="https://deploy.workers.cloudflare.com/?url=https://github.com/yaoleifly/geministocks"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full border border-gray-300 text-gray-700 hover:border-black hover:text-black transition-colors"
-                  title={t('footer.deployCloudflareHint')}
-                >
-                  <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="currentColor" aria-hidden="true">
-                    <path d="M16.5088 16.8447c.1475-.5068.0908-.9707-.1553-1.3154-.2246-.3164-.6045-.5-1.0664-.5205l-8.6807-.1123a.1559.1559 0 0 1-.1333-.0713c-.0283-.042-.0351-.0986-.0205-.1553.0283-.084.1123-.1484.2031-.1552l8.7578-.1123c1.0391-.0489 2.1631-.8916 2.5576-1.9219l.5-1.3086c.0215-.0557.0264-.1113.0147-.167-.5645-2.5533-2.8408-4.458-5.5615-4.458-2.5088 0-4.6377 1.6182-5.4102 3.8672-.4981-.373-1.1338-.5733-1.8203-.5069-1.2158.1211-2.1924 1.0977-2.3135 2.3135-.0312.3145-.0078.6191.0645.9053C1.583 13.1758 0 14.7871 0 16.7607c0 .1787.0137.3535.0391.5254.0117.0859.0849.1494.1718.1494h16.0225c.0947 0 .1826-.0664.2109-.1582l.0645-.4326z" />
-                  </svg>
-                  {t('footer.deployCloudflare')}
-                </a>
-             </div>
-             <div className="flex flex-col sm:flex-row justify-center items-center gap-x-6 gap-y-4">
-                <a
-                  href="https://github.com/yaoleifly/geministocks"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-black transition-colors"
-                >
-                  <GitHubIcon className="w-4 h-4" aria-hidden="true" />
-                  <span className="font-medium">{t('footer.openSource')}</span>
-                  <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded border border-gray-300 text-gray-500">MIT</span>
-                </a>
-             </div>
-          </footer>
-        </div>
-      </div>
-    </>
-  );
-};
-
-const App: React.FC = () => {
-  return (
-    <HashRouter>
-      <Routes>
-        <Route path="/" element={<MainPage />} />
-        <Route
-          path="/about"
-          element={
-            <Suspense fallback={null}>
-              <AboutPage />
-            </Suspense>
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+    document.title = t("First Look · Project screening", "初见 · 项目初筛");
+  }, [lang]);
+  useEffect(() => {
+    if (!job || result || job.status === "cancelled") return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const id = job.id;
+    async function poll() {
+      try {
+        const current = await screeningRequest<Job>(
+          `/api/screen/jobs/${encodeURIComponent(id)}`,
+        );
+        if (!active) return;
+        setJob(current);
+        if (current.status === "completed" || current.status === "failed") {
+          try {
+            const raw = await screeningRequest<unknown>(
+              `/api/screen/jobs/${encodeURIComponent(id)}/result`,
+            );
+            const parsed = screeningResultSchema.safeParse(raw);
+            if (!parsed.success)
+              throw new Error(
+                "报告结构校验失败 / Report validation failed. No unvalidated report was displayed.",
+              );
+            const report = parsed.data;
+            if (active) {
+              setResult(report);
+              setError("");
+            }
+          } catch (e) {
+            if (active) setError(current.error || (e as Error).message);
           }
-        />
-      </Routes>
-    </HashRouter>
+        } else if (current.status !== "cancelled")
+          timer = setTimeout(poll, 1500);
+      } catch (e) {
+        if (active) setError((e as Error).message);
+      }
+    }
+    void poll();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [job?.id, pollRetry, Boolean(result)]);
+  async function login(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      setSession(
+        await screeningRequest<Session>(
+          "/api/auth/login",
+          session?.csrfToken || "",
+          "POST",
+          { username, password },
+        ),
+      );
+      setPassword("");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (locked || busy) return;
+    setError("");
+    if (!website.trim() && !file) {
+      setError(
+        t("Provide a website URL or PDF deck.", "请提供官网 URL 或 PDF。"),
+      );
+      return;
+    }
+    if (website.trim()) {
+      try {
+        const u = new URL(website.trim());
+        if (
+          u.protocol !== "https:" ||
+          u.username ||
+          u.password ||
+          (u.port && u.port !== "443")
+        )
+          throw new Error();
+      } catch {
+        setError(t("Enter a public HTTPS URL.", "请输入公网 HTTPS URL。"));
+        return;
+      }
+    }
+    if (
+      file &&
+      (file.size > 25 * 1024 * 1024 ||
+        file.type !== "application/pdf" ||
+        !file.name.toLowerCase().endsWith(".pdf"))
+    ) {
+      setError(
+        t(
+          "PDF only, maximum 25 MB and 40 pages.",
+          "仅接受 PDF，最大 25 MB / 40 页。",
+        ),
+      );
+      return;
+    }
+    setLocked(true);
+    setBusy(true);
+    const turn = ++generation.current;
+    try {
+      const uploadId = file
+        ? await uploadDeck(file, session!.csrfToken)
+        : undefined;
+      const created = await screeningRequest<Job>(
+        "/api/screen/jobs",
+        session!.csrfToken,
+        "POST",
+        {
+          ...(website.trim() ? { website: website.trim() } : {}),
+          ...(uploadId ? { uploadId } : {}),
+          ...(note.trim() ? { note: note.trim() } : {}),
+          stage,
+          ...(session?.demoMode ? { demoScenario: scenario } : {}),
+        },
+      );
+      if (turn === generation.current) setJob(created);
+    } catch (e) {
+      if (turn === generation.current) setError((e as Error).message);
+    } finally {
+      if (turn === generation.current) setBusy(false);
+    }
+  }
+  async function cancel() {
+    if (!job || cancelling) return;
+    setCancelling(true);
+    setError("");
+    try {
+      await screeningRequest(
+        `/api/screen/jobs/${encodeURIComponent(job.id)}/cancel`,
+        session!.csrfToken,
+        "POST",
+      );
+      setPollRetry((n) => n + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCancelling(false);
+    }
+  }
+  function reset() {
+    generation.current++;
+    setJob(null);
+    setResult(null);
+    setWebsite("");
+    setNote("");
+    setFile(null);
+    setStage("unknown");
+    setLocked(false);
+    setError("");
+    setBusy(false);
+    setAdmin(false);
+  }
+  const activeJob = job && ["queued", "running"].includes(job.status);
+  return (
+    <div className="screening-app">
+      <header className="app-header">
+        <a className="brand" href="#main">
+          <span className="brand-mark">F</span>
+          <span>
+            FIRST LOOK
+            <small>{t("PRIVATE MARKET SCREENING", "一级市场项目初筛")}</small>
+          </span>
+        </a>
+        <nav aria-label={t("Main navigation", "主导航")}>
+          <button onClick={() => setLang(lang === "en" ? "zh" : "en")}>
+            {lang === "en" ? "中文" : "English"}
+          </button>
+          {session?.user && (
+            <>
+              <button aria-pressed={!admin} onClick={() => setAdmin(false)}>
+                {t("Screening", "项目初筛")}
+              </button>
+              <button aria-pressed={admin} onClick={() => setAdmin(true)}>
+                {t("Admin settings", "管理员设置")}
+              </button>
+              <button
+                disabled={busy || Boolean(activeJob)}
+                onClick={async () => {
+                  try {
+                    await screeningRequest(
+                      "/api/auth/logout",
+                      session.csrfToken,
+                      "POST",
+                    );
+                    reset();
+                    setSession(await screeningRequest<Session>("/api/auth/me"));
+                  } catch (e) {
+                    setError((e as Error).message);
+                  }
+                }}
+              >
+                {t("Sign out", "退出")}
+              </button>
+            </>
+          )}
+        </nav>
+      </header>
+      <main id="main">
+        {session?.demoMode && (
+          <aside className="demo-banner" role="note">
+            <strong>
+              {t("DEMO MODE · Fictional fixtures", "演示模式 · 虚构数据")}
+            </strong>
+            <span>
+              {t(
+                "No live research. All company facts are invented examples, not investment evidence.",
+                "非真实联网研究。公司资料为虚构示例，不能作为投资证据。",
+              )}
+            </span>
+          </aside>
+        )}
+        {error && (
+          <div className="notice danger" role="alert">
+            {error}
+            {job && !result && (
+              <button
+                onClick={() => {
+                  setError("");
+                  setPollRetry((n) => n + 1);
+                }}
+              >
+                {t("Retry status", "重试读取状态")}
+              </button>
+            )}
+          </div>
+        )}
+        {!ready ? (
+          <p role="status">
+            {t("Checking secure session…", "正在检查安全会话…")}
+          </p>
+        ) : !session?.user ? (
+          <section className="login-card panel">
+            <p className="eyebrow">FIRST LOOK / PRIVATE ACCESS</p>
+            <h1>{t("A clearer first look.", "有依据的第一眼。")}</h1>
+            <p className="muted">
+              {t(
+                "Sign in to your private research workspace.",
+                "登录受保护的项目研究工作台。",
+              )}
+            </p>
+            <form onSubmit={login}>
+              <label>
+                {t("Username", "用户名")}
+                <input
+                  autoComplete="username"
+                  required
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              </label>
+              <label>
+                {t("Password", "密码")}
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+              <button
+                className="primary"
+                disabled={busy || !session}
+                type="submit"
+              >
+                {busy ? t("Signing in…", "正在登录…") : t("Sign in", "登录")}
+              </button>
+            </form>
+            {!session && (
+              <button onClick={() => window.location.reload()}>
+                {t("Retry connection", "重试连接")}
+              </button>
+            )}
+          </section>
+        ) : admin ? (
+          <AdminSettings token={session.csrfToken} lang={lang} />
+        ) : (
+          <>
+            <div className="intro">
+              <p className="eyebrow">
+                01 / {t("EVIDENCE BEFORE CONVICTION", "先有证据，再做判断")}
+              </p>
+              <h1>
+                {t(
+                  "One project. One focused screening.",
+                  "一个项目，一次有边界的初筛。",
+                )}
+              </h1>
+              <p>
+                {t(
+                  "Understand the team, the product and the fit. Clear evidence, honest unknowns — not an investment decision.",
+                  "看清团队、产品与策略匹配。证据可追溯，未知不猜测；不代替投资决策。",
+                )}
+              </p>
+            </div>
+            <div className="screening-grid">
+              <section className="panel composer">
+                <div className="section-top">
+                  <h2>{t("Project materials", "项目资料")}</h2>
+                  <span className="badge">
+                    {locked ? t("Locked", "已锁定") : t("Single round", "单轮")}
+                  </span>
+                </div>
+                <p className="muted">
+                  {t(
+                    "Add everything before submitting. Inputs cannot be updated during or after this task.",
+                    "请在提交前一次性添加所有资料。本任务开始后不可追加或修改。",
+                  )}
+                </p>
+                <form onSubmit={submit}>
+                  <fieldset disabled={locked}>
+                    <label>
+                      {t("Website URL", "官网 URL")}
+                      <input
+                        type="url"
+                        placeholder="https://company.com"
+                        value={website}
+                        onChange={(e) => setWebsite(e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      {t("Pitch deck · PDF", "项目 Deck · PDF")}
+                      <input
+                        key={locked ? "locked" : "draft"}
+                        type="file"
+                        accept="application/pdf,.pdf"
+                        onChange={(e) => setFile(e.target.files?.[0] || null)}
+                      />
+                      {file && <span>{file.name}</span>}
+                      <small>
+                        {t(
+                          "One PDF · up to 25 MB / 40 pages. Page count is validated on the server.",
+                          "单份 PDF · 最大 25 MB / 40 页，页数由后端校验。",
+                        )}
+                      </small>
+                    </label>
+                    <label>
+                      {t("Stage", "融资阶段")}
+                      <select
+                        value={stage}
+                        onChange={(e) => setStage(e.target.value)}
+                      >
+                        <option value="unknown">
+                          {t(
+                            "Unknown · conservative early-stage template",
+                            "未知 · 暂用保守早期模板",
+                          )}
+                        </option>
+                        <option value="pre_seed">
+                          Pre-seed / {t("Angel", "天使")}
+                        </option>
+                        <option value="seed">Seed</option>
+                        <option value="series_a_plus">Series A+</option>
+                      </select>
+                    </label>
+                    <label>
+                      {t("Brief context (optional)", "简短备注（选填）")}
+                      <textarea
+                        maxLength={500}
+                        rows={3}
+                        value={note}
+                        onChange={(e) => setNote(e.target.value)}
+                        placeholder={t(
+                          "Company alias or relevant context",
+                          "公司别名等背景信息",
+                        )}
+                      />
+                    </label>
+                    {session.demoMode && (
+                      <label>
+                        {t("Demo scenario", "演示场景")}
+                        <select
+                          value={scenario}
+                          onChange={(e) => setScenario(e.target.value)}
+                        >
+                          <option value="standard">
+                            {t("Standard report", "标准报告")}
+                          </option>
+                          <option value="insufficient">
+                            {t("Insufficient information", "信息不足")}
+                          </option>
+                          <option value="policy">
+                            {t("Policy exclusion", "策略排除")}
+                          </option>
+                          <option value="failure">
+                            {t("Technical failure", "技术故障")}
+                          </option>
+                        </select>
+                      </label>
+                    )}
+                  </fieldset>
+                  <p className="privacy-note">
+                    {t(
+                      "Materials are sent to administrator-configured AI providers for processing. Upload only materials you are authorized to share. Private PDFs and task data are temporary; export your result before leaving.",
+                      "资料会发送到管理员配置的 AI 服务商处理。请仅上传有权共享的材料。PDF 与任务数据为临时保存，离开前请导出结果。",
+                    )}
+                  </p>
+                  <button
+                    type="submit"
+                    className="primary"
+                    disabled={locked || busy}
+                  >
+                    {busy
+                      ? t("Submitting materials…", "正在提交资料…")
+                      : t("Start screening", "开始初筛")}{" "}
+                    <span aria-hidden="true">↗</span>
+                  </button>
+                </form>
+              </section>
+              <div className="screening-output">
+                {job ? (
+                  <section
+                    className="panel progress"
+                    aria-label={t("Task progress", "任务进度")}
+                  >
+                    <div className="section-top">
+                      <h2>{t("Task progress", "任务进度")}</h2>
+                      <span className="badge">{job.status}</span>
+                    </div>
+                    <ol>
+                      {phases.map((phase, i) => (
+                        <li
+                          key={phase}
+                          aria-current={
+                            job.phase === phase ? "step" : undefined
+                          }
+                          className={
+                            phases.indexOf(job.phase) > i ? "done" : ""
+                          }
+                        >
+                          <span>
+                            {phases.indexOf(job.phase) > i ? "✓" : `0${i + 1}`}
+                          </span>
+                          {phaseNames[lang][i]}
+                        </li>
+                      ))}
+                    </ol>
+                    <p role="status">
+                      {job.status === "cancelled"
+                        ? t(
+                            "Cancelled. Temporary attachments are cleaned up by the server.",
+                            "已取消。临时附件由服务器清理。",
+                          )
+                        : job.status === "failed"
+                          ? t(
+                              "Technical failure. This is not an information-insufficiency judgment.",
+                              "技术故障，不代表公司资料不足。",
+                            )
+                          : t("Current server phase: ", "当前服务器阶段：") +
+                            phaseNames[lang][phases.indexOf(job.phase)]}
+                    </p>
+                    {activeJob && (
+                      <button disabled={cancelling} onClick={cancel}>
+                        {cancelling
+                          ? t("Requesting cancellation…", "正在取消…")
+                          : t("Cancel task", "取消任务")}
+                      </button>
+                    )}
+                  </section>
+                ) : (
+                  <aside className="empty-state">
+                    <span className="large-symbol">↗</span>
+                    <h2>
+                      {t(
+                        "A first look, not a final verdict.",
+                        "初步判断，而非最终结论。",
+                      )}
+                    </h2>
+                    <p>
+                      {t(
+                        "We separate project quality, evidence coverage and investment-policy fit. If the evidence is thin, the report stays short.",
+                        "项目质量、证据覆盖、策略匹配各自独立。证据不足，就让报告保持简短。",
+                      )}
+                    </p>
+                    <div>
+                      <span>01</span>
+                      {t("Team-first research", "团队优先")}
+                    </div>
+                    <div>
+                      <span>02</span>
+                      {t("Comparable means comparable", "对标必须真正可比")}
+                    </div>
+                    <div>
+                      <span>03</span>
+                      {t("Unknown stays unknown", "未知就是未知")}
+                    </div>
+                  </aside>
+                )}
+                {result && <ScreeningResultView result={result} lang={lang} />}
+                {locked && !busy && !activeJob && (
+                  <button className="new-screening" onClick={reset}>
+                    {t("Start a new screening", "新建一次初筛")}
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </main>
+      <footer>
+        FIRST LOOK <span>·</span>{" "}
+        {t("Private research. Explicit uncertainty.", "私有研究，坦诚未知。")}{" "}
+        <span>·</span> MIT
+      </footer>
+    </div>
   );
-};
-
-export default App;
+}
