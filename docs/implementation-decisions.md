@@ -25,3 +25,15 @@ Model keys are encrypted at rest with AES-256-GCM and a deployment secret; brows
 ## Delivery policy
 
 Stage commits are local, as requested by the attached execution specification. No push, production infrastructure change or deployment is authorized by that document. Live provider and production TLS checks must be marked blocked unless executed with actual credentials/infrastructure.
+
+## S1–S7 actual delivery
+
+S1 removed the old application entry graph, obsolete API/worker/proxies, trading schemas, translations, history/key storage and related dependencies. New UI retains React/TypeScript/Vite/Tailwind, bilingual behavior, local typography, report rendering and Markdown capability rather than attempting to adapt stock-trading reports.
+
+S2–S6 backend modules were implemented and independently tested, then integrated as one coherent local stage commit instead of pretending that each independently developed module was a fully working deployed stage. Frontend and ingestion/gateway contributions were validated together: final 15 files / 121 tests, typecheck/build, real private HTTP PDF upload/child extraction, and browser demo workflows. Details and remaining verification are in [acceptance-report.md](acceptance-report.md); S4 live verification and S7 production/adversarial validation remain incomplete.
+
+Budget is bounded through gateway invocations, native turns, timeout/retry, and raw provider usage records, not a universal money estimator. No USD totals are invented. Research sources are accepted only after secure retrieval, but semantic entailment/independence cannot be proven by structural validation. Team identity association is deliberately conservative; every numeric team sub-score requires its own rationale and sufficient, bound professional evidence. PDF-only discovery requires a literally supplied website whose public origin confirms the company name, with private URL paths/queries excluded from public discovery.
+
+The runtime migration is automatic SQLite schema v1. Old browser history and model keys are intentionally not imported; old deployment routes must be removed at cutover. New active documentation is README, deployment, model-and-security, implementation-decisions and acceptance-report. Inherited Cloudflare/Google/Jev/A-share notes are historical only.
+
+![Browser-to-backend trust boundaries](https://ampcode.com/artifacts/visuals/15b88b53-7d7f-4008-84c8-2951772f5167)

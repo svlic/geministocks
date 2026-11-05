@@ -1,30 +1,13 @@
-# Security Policy 安全策略
+# Security policy / 安全边界
 
-## How user API keys are handled 用户 API Key 的处理方式
+This is a private server-managed application, **not the former browser-local BYOM trust model**.
 
-Super Digger is a **Bring Your Own Model (BYOM)** application. This is the trust model:
+- Authenticated admin enters model keys over same-origin HTTPS. They are encrypted with AES-256-GCM at rest; reads expose masks. Deployment encryption secret must remain outside the database and source control.
+- Research and admin APIs require an opaque HttpOnly session; production uses Secure/SameSite=Strict, mutation Origin and CSRF checks, request limits and per-account job limits. The initial version has one administrator, no public registration.
+- Website retrieval validates public DNS, pins sockets, rechecks redirects and obeys robots. PDFs stream to private disk and are parsed in a permission-restricted, bounded child process. No public raw-PDF GET endpoint exists.
+- Decks enter model text only if all configured downstream roles consent; public discovery receives only the submitted public website. Do not use untrusted custom model endpoints.
+- Raw files are removed after extraction/cancellation/failure; unused uploads expire after 1 hour and jobs/results/extraction caches after 24 hours. Cleanup runs while the service is running and at startup. Disk snapshots and backups have separate operator-controlled retention.
 
-- **Model API keys** (OpenRouter, DeepSeek, Exa, AnySearch, etc.) are stored in the browser's `localStorage` only. They are never written to cookies, never sent to our analytics, and never stored on any server.
-- **Requests to model providers** go directly from your browser to the provider. For providers that block browser CORS, requests pass through a stateless same-origin proxy (`api/cors-proxy.ts` or the rewrites in `vercel.json`) that forwards them **without logging or persisting** headers or bodies.
-- **Analysis history and settings** are stored in `localStorage` on your device.
+Residual risks: model-based classification and claim entailment are not deterministic security boundaries; instructions alone do not prove prompt-injection immunity. Third-party pages can contain false claims. PDF Node permissions are not a complete OS sandbox; enforce CPU/RSS and outbound-network limits at deployment. Job inputs/results live on private disk, not full-database encryption; use encrypted volumes where required. SQLite secure-delete/checkpoint cannot guarantee erasure from SSD snapshots/backups.
 
-Relevant code to audit:
-
-| Concern | File |
-| --- | --- |
-| Key storage & config | `services/apiConfigService.ts` |
-| Model API calls | `services/streamingService.ts` |
-| Real-time search calls | `services/exaSearchService.ts` |
-| CORS proxy | `api/cors-proxy.ts`, `vercel.json` (rewrites) |
-
-## Notes for self-hosters 自部署注意事项
-
-- Review the protections in `api/cors-proxy.ts` before deploying: it enforces same-site usage, https-only targets, and blocks SSRF to private hosts. Verify these fit your domain — an open proxy can be abused by third parties on your quota.
-- The optional `OPENROUTER_API_KEY` env var (see `.env.example`) is only used by the optional server-side endpoint `api/ai-analyze.ts`. If you set it, that key is **yours as the deployer** and will be spent by anyone who can reach the endpoint — protect it or leave it unset.
-- Security headers (CSP, HSTS, etc.) are configured in `vercel.json`.
-
-## Reporting a vulnerability 报告安全漏洞
-
-Please email **codes@z.org** with a description and reproduction steps. Do not open a public issue for undisclosed vulnerabilities. We aim to respond within 7 days.
-
-请将漏洞描述与复现步骤发送至 **codes@z.org**，在漏洞未修复前请勿公开 Issue。我们会在 7 天内响应。
+See [model and security details](docs/model-and-security.md) and [deployment checklist](docs/deployment.md). Never publish credentials, original private decks or unredacted payloads in issues. For inherited upstream vulnerability reporting, contact **codes@z.org** privately with reproducible steps; contact your deployment operator for instance-specific leaks.

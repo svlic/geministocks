@@ -1,153 +1,67 @@
-# Super Digger 挖掘机
+# GeminiStocks · 一级市场单轮初筛
 
-[English](#english) | [中文](#中文)
+在原 GeminiStocks / Super Digger 仓库上改造的私有研究工具。一次提交创业公司官网、PDF Deck 或两者，自动完成身份识别、策略预筛、证据充分性判断、独立团队分析和简短报告。默认中文，可切换英文。
 
-AI-powered investment research tool. Turn any financial news or topic into a structured, multi-dimensional analysis report — using **your own AI model**.
+**项目质量、证据覆盖、基金策略匹配分开呈现；不是投资建议。** 信息不足则结束本轮并列必要材料，不聊天、不补料更新、不建立长期项目库。
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fyaoleifly%2Fgeministocks)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+## 本地启动
 
----
+要求 **Node.js ≥24.11.0、pnpm 11.8.0**。SQLite 使用 Node 内建模块，无需额外数据库服务。
+
+```bash copy Copy Setup Commands
+corepack enable
+pnpm install --frozen-lockfile
+cp .env.example .env
+openssl rand -hex 32
+```
+
+将生成值填入 `.env` 的 `CONFIG_ENCRYPTION_KEY`；设置 `ADMIN_PASSWORD`（至少 12 字符）。不要提交 `.env`。两个终端分别运行：
+
+```bash copy Copy Backend Command
+pnpm dev:server
+```
+
+```bash copy Copy Frontend Command
+pnpm dev
+```
+
+在启动机器打开 `http://localhost:3000`，以 `.env` 中的管理员账户登录。Vite 代理 `/api` 到 3001。开发模式 Origin 必须与 `APP_ORIGIN` 完全一致；远程访问需使用端口转发或同步修改 Origin。
+
+### 无密钥演示
+
+`.env.example` 默认 `DEMO_MODE=true`。首页有明显虚构标识及标准、信息不足、策略排除、技术失败四种场景。PDF 仍实际校验和解析，但演示分析不读取真实模型、不将虚构公司当作用户上传公司的真实结论。
+
+### 真实研究
+
+将 `DEMO_MODE=false` 后重启后端。在管理员设置添加模型，填写供应商当前支持的 model ID、API Key，分配 `research`、`team`、`synthesis` 角色，保存后测试连接。Key 仅提交给本部署后端，加密落盘，读取只返回掩码。OpenAI 兼容适配器仅支持文本；xAI 使用原生 Responses API 的网页/X 工具。只有所有下游角色明确允许机密处理时，Deck 才会进入模型输入。真实模式出错不会回退演示。
+
+## 架构与运行边界
+
+- React 19 / TypeScript / Vite / Tailwind；浏览器不直连模型，不保存 Key 或长期研究历史。
+- `server/app.ts`：认证 HTTP API、私有直传、持久任务 worker；`server/persistence/`：SQLite migration、会话、加密与 TTL。
+- `server/ingestion/`：防 SSRF 官网抓取、robots 边界、独立子进程 PDF 文本提取。
+- `server/gateway/`：xAI 原生工具与 OpenAI 文本降级；`server/research/`：预筛、团队、综合、证据与后端评分。
+- `shared/screening-schema.ts` 为前后端契约；`services/` 只保留同源客户端和 Markdown 导出。
+- 常驻 Node **单实例** + 持久卷，不是 Vercel/Workers 临时函数。任务 24 小时过期，原始 PDF 提取后删除，未使用上传 1 小时过期。
+
+详见 [部署与迁移](docs/deployment.md)、[模型与安全](docs/model-and-security.md)、[实施决策](docs/implementation-decisions.md)、[逐项验收](docs/acceptance-report.md)。旧 Cloudflare / Google OAuth / A-share / Jev 文档只作历史资料，不适用于此版本。
+
+## 验证
+
+```bash copy Copy Verification Commands
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+测试中的 xAI 响应为 mock，**不代表真实付费联网已验收**。当前没有真实凭据，live smoke 和生产 TLS/资源限制仍待部署环境验证。PDF 不做 OCR、图片理解；JS-only/登录/反爬站点会产生限制，不绕过访问控制。模型语义、身份消歧及引用对事实的支持程度仍需人工审阅。
 
 ## English
 
-### Features
+Private, single-round early-stage company screening. Submit a public HTTPS website and/or PDF deck, wait for a structured report, and export UTF-8 Markdown. Quality score, evidence coverage, and investment-policy fit remain independent. No chat, trading recommendations, news feed, or persistent project library.
 
-- **Dig Analysis** — Enter a topic, news article, or link; three parallel analysis passes produce a full report with an **Investment Attractiveness Score** and an **Information Gap Score** (how much the market has already priced in).
-- **Real-time Search** — Optionally plug in [Exa](https://exa.ai) or [AnySearch](https://anysearch.com) (free anonymous tier) to fetch the latest web results before analysis; all citations are shown in the report.
-- **Latest News** — Aggregates five sources (Xueqiu, 36Kr, Geek Insight, Bloomberg, Buzzing) with AI concept-tag extraction; click a tag to dig into that concept.
-- **History & Review** — Every analysis is saved locally with score badges, sorting, and one-click re-analysis to compare score changes over time.
-- **Bring Your Own Model (BYOM)**
-  - Cloud APIs: OpenRouter, DeepSeek, MiniMax, Ollama, or any OpenAI-compatible endpoint
-  - Local CLIs: 9Router (`localhost:20128`), Claude Code (`localhost:3456`), Codex (`localhost:1455`) — auto-detected
-  - All keys and settings live in your browser's localStorage. **Nothing is uploaded to any server.**
-- Bilingual (中文 / English), PWA, Markdown export.
+Run the Node backend and Vite frontend with the commands above. Configure server secrets in `.env`, then models through authenticated admin settings. Demo fixtures are explicitly fictional; live failures never silently become demo reports. Deployment requires a persistent single-instance Node 24 service, HTTPS reverse proxy, and private disk volume. Read the acceptance report before production use.
 
-### Quick Start
+## License
 
-Requires Node.js 18+.
-
-```bash
-pnpm install
-pnpm dev
-```
-
-Open http://localhost:3000, click **API Settings** in the top-right corner, and connect your model. No environment variables are required — see [.env.example](.env.example) for the few optional ones.
-
-### Architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│ React SPA (Vite + TypeScript + Tailwind)             │
-│                                                      │
-│  App.tsx ─ components/ (UI, lazy-loaded modals)      │
-│     │                                                │
-│  services/                                           │
-│   ├─ geminiService      3-pass analysis orchestration│
-│   ├─ streamingService   OpenAI-compatible API calls  │
-│   ├─ apiConfigService   BYOM config (localStorage)   │
-│   ├─ exaSearchService   Exa / AnySearch providers    │
-│   └─ historyService     local analysis history       │
-└──────────────┬───────────────────────────────────────┘
-               │ same-origin proxies (CORS)
-┌──────────────▼───────────────────────────────────────┐
-│ Vercel                                               │
-│  vercel.json rewrites: /exa-api → api.exa.ai         │
-│    /anysearch-api → api.anysearch.com  (+ ollama)    │
-│  api/cors-proxy.ts   generic proxy for cloud APIs    │
-│  api/ai-analyze.ts   optional server-side fallback   │
-└──────────────────────────────────────────────────────┘
-```
-
-Key principle: the app is **client-first**. Serverless functions only act as CORS-bypassing pass-throughs; user API keys are sent directly from the browser to the model provider and are never stored server-side.
-
-### Directory Layout
-
-```
-api/            Vercel serverless functions (proxies, optional endpoints)
-components/     React components (modals are lazy-loaded)
-services/       Business logic, API clients, storage
-hooks/          React hooks (i18n, ...)
-public/locales/ zh.json / en.json translations
-utils/          Shared helpers
-docs/           Design notes and archived plans
-```
-
-### Deploy
-
-One-click with the button above, or:
-
-```bash
-npm i -g vercel && vercel
-```
-
-`vercel.json` ships with API rewrites and security headers. If you fork this project, review the proxy protections in `api/cors-proxy.ts` (same-site check, https-only, SSRF guard) for your own domain.
-
-### Security
-
-- User model API keys: browser localStorage only, never uploaded. Audit `services/apiConfigService.ts` and `api/cors-proxy.ts`.
-- See [SECURITY.md](SECURITY.md) for the full policy and how to report vulnerabilities.
-
-### Contributing
-
-PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [ROADMAP](ROADMAP.md) for planned work. Before submitting, run:
-
-```bash
-pnpm typecheck && pnpm test && pnpm build
-```
-
-### License
-
-[MIT](LICENSE)
-
----
-
-## 中文
-
-### 核心功能
-
-- **挖掘分析**：输入主题/新闻/链接，三段并行分析生成完整报告，含**投资吸引力评分**与**信息差评分**（衡量市场是否已消化该信息）
-- **实时搜索**：可选接入 [Exa](https://exa.ai) 或 [AnySearch](https://anysearch.com)（有免费匿名额度），分析前自动检索最新网络资料并注入，报告展示全部引用来源
-- **最新动态**：聚合雪球、虎嗅、极客洞察、彭博、Buzzing、Ahead of AI 等新闻源，支持自定义 RSS；AI 概念标签一键提取，点击标签直接发起挖掘
-- **历史复盘**：分析历史自动保存，双评分徽章 + 排序筛选 + 一键重新分析对比评分变化
-- **自带模型（BYOM）**：
-  - 云端 API：OpenRouter、DeepSeek、MiniMax、Ollama 及任意 OpenAI 兼容服务
-  - 本机 CLI：9Router（localhost:20128）、Claude Code（localhost:3456）、Codex（localhost:1455），自动扫描运行状态
-  - 所有 Key 与配置仅保存在浏览器 localStorage，**不会上传到任何服务器**
-- 中英双语、PWA、Markdown 报告导出
-
-### 本地运行
-
-前置要求：Node.js 18+
-
-```bash
-pnpm install
-pnpm dev
-```
-
-打开 http://localhost:3000，点击右上角「模型设置」连接你的 AI 模型即可。无需配置任何环境变量——少量可选项见 [.env.example](.env.example)。
-
-### 架构说明
-
-应用为**客户端优先**架构（见上方英文版架构图）：Serverless 函数仅做 CORS 转发，用户的模型 API Key 由浏览器直连模型服务商，服务端不存储任何密钥。
-
-### 部署
-
-点击上方 Deploy 按钮一键部署，或使用 `vercel` CLI。`vercel.json` 已内置 API 代理 rewrite 与安全响应头。Fork 后请检查 `api/cors-proxy.ts` 的代理防护（���站校验、仅 https、SSRF 防护）是否适合你的域名。
-
-### 参与贡献
-
-欢迎 PR，流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，规划见 [ROADMAP](ROADMAP.md)；安全问题报告见 [SECURITY.md](SECURITY.md)。提交前请运行 `pnpm typecheck && pnpm test && pnpm build`。
-
-### 联系
-
-- 开发者：僧僧
-- 邮箱：codes@z.org
-
-### 许可证
-
-[MIT](LICENSE)
-
-## Cloudflare Workers deployment
-
-Build and deploy the SPA and API proxies together with `pnpm deploy`. For local validation run `pnpm dev:cloudflare`; no secrets are required for BYOM. See [Cloudflare migration guide](docs/CLOUDFLARE_MIGRATION.md) for Git integration, optional statistics secrets, domain cutover and rollback.
+[MIT](LICENSE). Original project by 僧僧 and contributors; original license and copyright retained.
