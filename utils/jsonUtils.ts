@@ -13,21 +13,18 @@ export function extractJson(text: string): string {
 
     // Determine if we are looking for an object or an array
     // We prefer the one that appears first.
-    let isObject = true;
     if (arrayStartIndex !== -1 && (startIndex === -1 || arrayStartIndex < startIndex)) {
         startIndex = arrayStartIndex;
-        isObject = false;
     }
 
     if (startIndex === -1) return text; // No JSON start found
 
-    const openChar = isObject ? '{' : '[';
-    const closeChar = isObject ? '}' : ']';
+    const openChar = text[startIndex];
+    const closeChar = openChar === '{' ? '}' : ']';
 
     let balance = 0;
     let inString = false;
     let isEscaped = false;
-    let endIndex = -1;
 
     for (let i = startIndex; i < text.length; i++) {
         const char = text[i];
@@ -53,15 +50,10 @@ export function extractJson(text: string): string {
             } else if (char === closeChar) {
                 balance--;
                 if (balance === 0) {
-                    endIndex = i;
-                    break;
+                    return text.substring(startIndex, i + 1);
                 }
             }
         }
-    }
-
-    if (endIndex !== -1) {
-        return text.substring(startIndex, endIndex + 1);
     }
 
     // If we couldn't balance the braces (e.g. truncated output due to max_tokens),
