@@ -1,0 +1,10 @@
+PRAGMA journal_mode = WAL;
+PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS admin_users (username TEXT PRIMARY KEY, password_hash TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS auth_sessions (id_hash TEXT PRIMARY KEY, username TEXT NOT NULL REFERENCES admin_users(username), csrf TEXT NOT NULL, expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS configs (kind TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, owner TEXT NOT NULL, size INTEGER NOT NULL, ready INTEGER NOT NULL DEFAULT 0, expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS screening_jobs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, status TEXT NOT NULL, phase TEXT NOT NULL, input TEXT NOT NULL, snapshot TEXT NOT NULL, ingestion_cache TEXT, result TEXT, error TEXT, attempts INTEGER NOT NULL DEFAULT 0, expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS job_usage (job_id TEXT NOT NULL REFERENCES screening_jobs(id) ON DELETE CASCADE, module TEXT NOT NULL, metadata TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS jobs_status ON screening_jobs(status, expires);
+PRAGMA user_version = 1;
