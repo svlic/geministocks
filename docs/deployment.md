@@ -2,7 +2,9 @@
 
 ## Supported topology
 
-One persistent Node ≥24.11.0 process, SQLite and private filesystem on a persistent volume, behind an HTTPS reverse proxy. Do not run multiple replicas against this worker/database. Vercel/Cloudflare static deployment alone is not sufficient; the old deployment documents do not apply. No deployment has been executed as part of local acceptance.
+One persistent Node ≥24.11.0 process, SQLite and private filesystem on a persistent volume, behind an HTTPS reverse proxy. Do not run multiple replicas against this worker/database. Vercel/Cloudflare static deployment alone is not sufficient; the old deployment documents do not apply. Production HTTPS and live-provider deployment remain environment-specific acceptance checks.
+
+For the recommended Docker Compose path, follow the [README deployment instructions](../README.md#docker-compose-部署推荐). The image includes the built frontend, Node backend, PDF child parser and SQLite migration. Compose persists `/data` in a named volume and binds port 3001 to host loopback for an existing HTTPS proxy. Never remove that volume on upgrade or regenerate its encryption key. The steps below describe the alternative non-container installation.
 
 1. Install the declared pnpm version and `pnpm install --frozen-lockfile` including build dependencies. Run all checks, then `pnpm build`.
 2. Set `.env` or secret-manager variables from `.env.example`. Use a fixed random 32-byte hex `CONFIG_ENCRYPTION_KEY`, strong administrator credentials, an HTTPS `APP_ORIGIN`, `DATA_DIR` on private durable storage, and `DEMO_MODE=false` for live service. Never expose the encryption key as a Vite variable.
