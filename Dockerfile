@@ -14,8 +14,11 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/shared ./shared
+COPY --from=build /app/utils ./utils
 RUN mkdir /data && chown node:node /data && chmod 700 /data
 USER node
+# Fail the build if the runtime image is missing a backend dependency.
+RUN node --import tsx -e "import('./server/app.ts')"
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3001/api/auth/me').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
