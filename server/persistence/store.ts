@@ -23,6 +23,19 @@ export class Store {
     this.db.prepare('INSERT OR IGNORE INTO configs VALUES (?,?)').run('scoring',JSON.stringify(defaultScoring));
     this.db.prepare('INSERT OR IGNORE INTO configs VALUES (?,?)').run('policy',JSON.stringify({version:'1',prompt:'',rules:[]}));
     this.db.prepare('INSERT OR IGNORE INTO configs VALUES (?,?)').run('model-configs',JSON.stringify({version:'1',models:[]}));
+    // Migrate editable settings only. Job snapshots and stored results stay immutable.
+    const models=this.getConfig('model-configs');
+    if(models.models.some((m:any)=>m.provider==='xai'||'webSearch' in m||'xSearch' in m)){
+      models.models=models.models.map(({webSearch,xSearch,...m}:any)=>m.provider==='xai'
+        ? {...m,provider:'openai',baseUrl:m.baseUrl??'https://api.x.ai/v1',enabled:false}
+        : m);
+      models.version=String(Number(models.version)+1);this.setConfig('model-configs',models);
+    }
+    const scoring=this.getConfig('scoring');
+    if('researchTurns' in scoring||'teamTurns' in scoring){
+      delete scoring.researchTurns;delete scoring.teamTurns;
+      scoring.version=String(Number(scoring.version)+1);this.setConfig('scoring',scoring);
+    }
   }
   encrypt(value:unknown) { const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',this.key,iv);const ciphertext=Buffer.concat([cipher.update(JSON.stringify(value)),cipher.final()]);return Buffer.concat([iv,cipher.getAuthTag(),ciphertext]).toString('base64'); }
   decrypt<T=any>(value:string):T { const b=Buffer.from(value,'base64'),cipher=createDecipheriv('aes-256-gcm',this.key,b.subarray(0,12));cipher.setAuthTag(b.subarray(12,28));return JSON.parse(Buffer.concat([cipher.update(b.subarray(28)),cipher.final()]).toString()); }

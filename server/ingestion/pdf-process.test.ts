@@ -15,7 +15,7 @@ describe('PDF child process boundary', () => {
       final(cb) {
         cb();
         queueMicrotask(() => {
-          const encoded = Buffer.from(JSON.stringify({ pages: [{ page: 1, text }], unreadable: [], truncated: [] }));
+          const encoded = Buffer.from(JSON.stringify({ pages: [{ page: 1, text }], unreadable: [], truncated: [], failed: [] }));
           const firstMultibyte = encoded.indexOf(Buffer.from('中'));
           child.stdout.write(encoded.subarray(0, firstMultibyte + 1));
           child.stdout.write(encoded.subarray(firstMultibyte + 1));

@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { extractPdf } from './pdf';
 
 // Small valid text/blank PDF fixtures generated in memory, never confidential data.
-function pdf(pages: number, text = true) {
+function pdf(pages: number, text: boolean | string[] = true) {
   const objects = ['<< /Type /Catalog /Pages 2 0 R >>', `<< /Type /Pages /Count ${pages} /Kids [${Array.from({ length: pages }, (_, i) => `${3 + i * 2} 0 R`).join(' ')}] >>`];
   for (let i = 0; i < pages; i++) {
-    const stream = text ? `BT /F1 12 Tf 30 80 Td (Company page ${i + 1} product and customer evidence.) Tj ET` : '';
+    const pageText = Array.isArray(text) ? text[i] : text ? `Company page ${i + 1} product and customer evidence.` : '';
+    const stream = pageText ? `BT /F1 12 Tf 30 80 Td (${pageText}) Tj ET` : '';
     objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Contents ${4 + i * 2} 0 R >>`, `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
   }
   let data = '%PDF-1.4\n';
@@ -40,6 +41,13 @@ describe('isolated PDF extraction', () => {
     const result = await extractPdf(pdf(2, false), 'deck');
     expect(result.evidence).toEqual([]);
     expect(result.limitations.join(' ')).toMatch(/1.*2.*OCR/);
+  });
+  it('keeps sparse text and usable pages when a deck also contains blank pages', async () => {
+    const result = await extractPdf(pdf(4, ['Company product and customer evidence.', '', 'Thanks', 'Team background and contribution evidence.']), 'deck');
+    expect(result.evidence.map(e => e.page)).toEqual([1, 3, 4]);
+    expect(result.evidence[1].quoteOrSummary).toBe('Thanks');
+    expect(result.limitations.join(' ')).toContain('pdf_sparse_pages: 第 2, 3 页');
+    expect(result.limitations.join(' ')).not.toMatch(/pdf_page_read_failed|technical_error/);
   });
   it('supports cancellation', async () => {
     await expect(extractPdf(pdf(2), 'deck', AbortSignal.abort())).rejects.toMatchObject({ code: 'cancelled' });

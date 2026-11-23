@@ -9,15 +9,13 @@ import {
 
 type Model = {
   id: string;
-  provider: "xai" | "openai";
+  provider: "openai";
   modelId: string;
   baseUrl: string;
   roles: ("research" | "team" | "synthesis")[];
   enabled: boolean;
   timeoutMs: number;
   maxOutputTokens: number;
-  webSearch: boolean;
-  xSearch: boolean;
   allowConfidential: boolean;
   apiKeyMasked?: string;
   apiKey?: string;
@@ -40,8 +38,6 @@ type Scoring = {
   weights: Record<"pre_seed" | "seed" | "series_a_plus", number[]>;
   coverageThreshold: number;
   hardExcludeConfidence: number;
-  researchTurns: number;
-  teamTurns: number;
 };
 const dimensions = [
   "team",
@@ -298,8 +294,8 @@ export default function AdminSettings({
                 <>
                   <p className="muted">
                     {t(
-                      "Blank API key preserves the stored secret. Save before running a connectivity test; tests use the saved version.",
-                      "API 密钥留空则保留原密钥。请先保存再测试连接；测试使用已保存配置。",
+                      "OpenAI-compatible text analysis only; public web search is configured separately on the server. No X search. Blank API key preserves the stored secret. Save before testing the connection.",
+                      "模型仅支持 OpenAI-compatible 文本分析；公开网页搜索由服务端单独配置，不支持 X 搜索。API 密钥留空则保留原密钥。请先保存再测试连接。",
                     )}
                   </p>
                   {models.models.map((m, i) => (
@@ -328,7 +324,6 @@ export default function AdminSettings({
                               })
                             }
                           >
-                            <option value="xai">xAI · native Responses</option>
                             <option value="openai">OpenAI-compatible</option>
                           </select>
                         </label>
@@ -388,8 +383,6 @@ export default function AdminSettings({
                         {(
                           [
                             "enabled",
-                            "webSearch",
-                            "xSearch",
                             "allowConfidential",
                           ] as const
                         ).map((key) => (
@@ -427,8 +420,8 @@ export default function AdminSettings({
                         }}
                       >
                         {t(
-                          "Test saved model and tools",
-                          "测试已保存模型与工具",
+                          "Test saved model connection",
+                          "测试已保存模型连接",
                         )}
                       </button>{" "}
                       <button
@@ -451,15 +444,13 @@ export default function AdminSettings({
                           ...models.models,
                           {
                             id: "",
-                            provider: "xai",
+                            provider: "openai",
                             modelId: "",
-                            baseUrl: "https://api.x.ai/v1",
+                            baseUrl: "https://api.openai.com/v1",
                             roles: ["research"],
                             enabled: false,
                             timeoutMs: 60000,
                             maxOutputTokens: 4000,
-                            webSearch: false,
-                            xSearch: false,
                             allowConfidential: false,
                           },
                         ],
@@ -668,8 +659,6 @@ export default function AdminSettings({
                       [
                         "coverageThreshold",
                         "hardExcludeConfidence",
-                        "researchTurns",
-                        "teamTurns",
                       ] as const
                     ).map((key) => (
                       <label key={key}>
@@ -677,8 +666,8 @@ export default function AdminSettings({
                         <input
                           type="number"
                           min={0}
-                          max={key.endsWith("Turns") ? 10 : 1}
-                          step={key.endsWith("Turns") ? 1 : 0.01}
+                          max={1}
+                          step={0.01}
                           value={scoring[key]}
                           onChange={(e) =>
                             setScoring({

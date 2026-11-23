@@ -6,6 +6,7 @@ const origin=process.env.APP_ORIGIN??'http://localhost:3000';
 const app=createApplication({
   dataDir:resolve(process.env.DATA_DIR??'.screening-data'),secret:process.env.CONFIG_ENCRYPTION_KEY??'',
   username:process.env.ADMIN_USERNAME??'admin',password:process.env.ADMIN_PASSWORD??'',demoMode:process.env.DEMO_MODE==='true',origin,
+  searchApiKey:process.env.BRAVE_SEARCH_API_KEY,
   distDir:production?resolve('dist'):undefined,
 });
 app.server.listen(Number(process.env.PORT??3001),process.env.HOST??'127.0.0.1',()=>{app.startWorker();console.info('Screening service listening; demo mode:',process.env.DEMO_MODE==='true');});

@@ -140,7 +140,10 @@ export function createWebsiteIngestor(transport: Transport, maxPages = 8) {
     let pages = 0;
     while (queue.length && pages < Math.min(8, maxPages)) {
       if (signal?.aborted) return fail('cancelled', 'Website ingestion cancelled.');
-      if (overall.aborted) return fail('site_timeout', 'Website ingestion exceeded its time limit.');
+      if (overall.aborted) {
+        if (!evidence.length) return fail('site_timeout', 'Website ingestion exceeded its time limit.');
+        limitations.push('site_timeout: Crawl time limit reached; successfully retrieved pages remain usable.'); break;
+      }
       const item = queue.shift()!;
       if (seen.has(item.url.href)) continue;
       seen.add(item.url.href);
@@ -177,7 +180,8 @@ export function createWebsiteIngestor(transport: Transport, maxPages = 8) {
             if (links.length >= 80) return;
             try {
               const candidate = validateWebsiteUrl(new URL($(el).attr('href')!, url).href);
-              if (candidate.hostname === initial.hostname && !candidate.search && !seen.has(candidate.href) && /\/(about|team|product|technology|docs|pricing|company)(\/|$|[-_])/i.test(candidate.pathname)) links.push(candidate);
+              if (candidate.hostname === initial.hostname && !candidate.search && !seen.has(candidate.href) &&
+                (/\/(about|team|product|technology|docs|pricing|company|solutions|features)(\/|$|[-_])/i.test(candidate.pathname) || /关于|团队|产品|技术|公司|解决方案/.test($(el).text()))) links.push(candidate);
             } catch { /* Unsafe/unrelated links are not crawled. */ }
           });
           for (const link of links) if (queue.length < 80) queue.push({ url: link, depth: item.depth + 1 });

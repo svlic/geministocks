@@ -55,7 +55,10 @@ complete OS/container sandbox or a total native-memory quota**; deployments
 should additionally use process/container CPU and RSS limits for hostile files.
 
 The PDF.js parser disables eval, system fonts, font-face rendering and WASM.
-Scanned/low-text/unreadable pages are reported by page number, never invented.
+Sparse/blank/image-only pages are coverage notices (`pdf_sparse_pages`), distinct
+from actual per-page extraction failures (`pdf_page_read_failed`). Text from
+sparse pages is retained when present, as are the other usable pages. Neither
+notice aborts extraction of the remaining document; content is never invented.
 No OCR, chart interpretation, or visual model is called. Text is capped at
 12,000 characters per page; extraction order and complex table layout can be
 imperfect. Damaged/encrypted inputs fail explicitly.

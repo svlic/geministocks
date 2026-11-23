@@ -41,13 +41,13 @@ export async function extractPdf(buffer: Buffer, documentId: string, signal?: Ab
       try {
         const parsed: unknown = JSON.parse(output);
         if (!parsed || typeof parsed !== 'object') throw new Error();
-        const data = parsed as { error?: string; pages?: { page: number; text: string }[]; unreadable?: number[]; truncated?: number[] };
+        const data = parsed as { error?: string; pages?: { page: number; text: string }[]; unreadable?: number[]; truncated?: number[]; failed?: number[] };
         if (data.error) {
           finish(new IngestionError(data.error === 'pdf_page_limit' ? 'pdf_page_limit' : 'invalid_pdf', data.error === 'pdf_page_limit' ? 'PDF exceeds 40 pages.' : 'PDF could not be parsed; it may be damaged or encrypted.')); return;
         }
-        if (!Array.isArray(data.pages) || data.pages.length > 40 || !Array.isArray(data.unreadable) || !Array.isArray(data.truncated)) throw new Error();
+        if (!Array.isArray(data.pages) || data.pages.length > 40 || !Array.isArray(data.unreadable) || !Array.isArray(data.truncated) || !Array.isArray(data.failed)) throw new Error();
         const validPage = (n: unknown) => Number.isInteger(n) && Number(n) >= 1 && Number(n) <= 40;
-        if (!data.unreadable.every(validPage) || !data.truncated.every(validPage)) throw new Error();
+        if (!data.unreadable.every(validPage) || !data.truncated.every(validPage) || !data.failed.every(validPage)) throw new Error();
         const seen = new Set<number>();
         const retrievedAt = new Date().toISOString();
         const evidence = data.pages.map(item => {
@@ -56,7 +56,8 @@ export async function extractPdf(buffer: Buffer, documentId: string, signal?: Ab
           return { id: `pdf-${randomUUID()}`, type: 'uploaded_deck' as const, title: `Uploaded deck — page ${item.page}`, url: null, documentId, page: item.page, publishedAt: null, retrievedAt, quoteOrSummary: item.text };
         });
         const limitations: string[] = [];
-        if (data.unreadable.length) limitations.push(`pdf_unreadable_pages: Pages ${data.unreadable.join(', ')} contain little or no extractable text (possibly scans or charts). OCR/visual extraction is not configured; their content has not been inferred.`);
+        if (data.unreadable.length) limitations.push(`pdf_sparse_pages: 第 ${data.unreadable.join(', ')} 页可提取文本较少或为空，不影响其他页面分析；未推测图片或图表内容 / Pages ${data.unreadable.join(', ')} have little or no extractable text; other pages remain usable. OCR/visual extraction is not configured; image/chart content has not been inferred.`);
+        if (data.failed.length) limitations.push(`pdf_page_read_failed: 第 ${data.failed.join(', ')} 页文本提取失败，其他页面仍可使用 / Text extraction failed on pages ${data.failed.join(', ')}; other pages remain usable.`);
         if (data.truncated.length) limitations.push(`pdf_text_truncated: Pages ${data.truncated.join(', ')} were bounded to 12000 characters.`);
         finish(undefined, { evidence, limitations });
       } catch { finish(new IngestionError('pdf_parse_failed', 'PDF parser returned invalid output.')); }

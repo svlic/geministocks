@@ -1,11 +1,11 @@
-import { beforeEach,afterEach,it,expect } from 'vitest';
+import { beforeEach,afterEach,it,expect,vi } from 'vitest';
 import { mkdtempSync,rmSync,readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from './app';
 import { fictionalDeck } from './test-fixtures';
 let app:ReturnType<typeof createApplication>,dir:string,base:string,cookie:string,csrf:string;
-beforeEach(async()=>{dir=mkdtempSync(join(tmpdir(),'screening-'));app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin:'http://localhost'});await new Promise<void>(r=>app.server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(app.server.address() as any).port}`;const res=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json',origin:'http://localhost'},body:JSON.stringify({username:'admin',password:'test-password-123'})});cookie=res.headers.get('set-cookie')!.split(';')[0];csrf=(await res.json()).csrfToken;});
+beforeEach(async()=>{dir=mkdtempSync(join(tmpdir(),'screening-'));app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin:'http://localhost',searchApiKey:'search-test-only'});await new Promise<void>(r=>app.server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(app.server.address() as any).port}`;const res=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json',origin:'http://localhost'},body:JSON.stringify({username:'admin',password:'test-password-123'})});cookie=res.headers.get('set-cookie')!.split(';')[0];csrf=(await res.json()).csrfToken;});
 afterEach(async()=>{await app.close();rmSync(dir,{recursive:true,force:true});});
 const request=(url:string,method='GET',body?:unknown,token=csrf)=>fetch(base+url,{method,headers:{cookie,origin:'http://localhost','x-csrf-token':token,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
 it.each(['http://screening.test','https://screening.test'])('supports login and logout for browser origin %s behind an HTTP backend',async(origin)=>{
@@ -47,11 +47,44 @@ it('rejects anonymous API access, missing CSRF and prompt overrides',async()=>{
   expect((await request('/api/screen/jobs','POST',{website:'http://127.0.0.1'})).status).toBe(400);
 });
 it('encrypts stored keys, masks reads and persists configuration',async()=>{
-  const model={id:'test',provider:'xai',modelId:'operator-model-id',roles:['research'],enabled:true,timeoutMs:10000,maxOutputTokens:1000,webSearch:true,xSearch:true,allowConfidential:false,apiKey:'secret-for-test-only'};
+  const model={id:'test',provider:'openai',modelId:'operator-model-id',roles:['research'],enabled:true,timeoutMs:10000,maxOutputTokens:1000,allowConfidential:false,apiKey:'secret-for-test-only'};
   expect((await request('/api/admin/model-configs','PUT',{version:'1',models:[model]})).status).toBe(200);
   const response=await (await request('/api/admin/model-configs')).text();expect(response).not.toContain('secret-for-test-only');expect(response).toContain('apiKeyMasked');
   expect(readFileSync(join(dir,'screening.sqlite')).includes(Buffer.from('secret-for-test-only'))).toBe(false);
   expect(app.store.getConfig('model-configs').models[0].apiKey).not.toBe('secret-for-test-only');
+});
+it('accepts transient website DNS failures but still rejects unsafe addresses at submission',async()=>{
+  const ingestion=await import('./ingestion/index');
+  const check=vi.spyOn(ingestion,'assertPublicUrl').mockRejectedValueOnce(new ingestion.IngestionError('site_network_error','transient')).mockRejectedValueOnce(new ingestion.IngestionError('unsafe_address','private'));
+  try{
+    expect((await request('/api/screen/jobs','POST',{website:'https://public.example.org'})).status).toBe(202);
+    expect((await request('/api/screen/jobs','POST',{website:'https://public.example.org'})).status).toBe(400);
+  }finally{check.mockRestore();}
+});
+it('migrates legacy settings once, preserves secrets and snapshots, and requires explicit re-enabling of native models',async()=>{
+  const apiKey=app.store.encrypt('legacy-test-secret');
+  const common={modelId:'legacy-model',roles:['research'],enabled:true,timeoutMs:10000,maxOutputTokens:1000,allowConfidential:false,apiKey,webSearch:true,xSearch:true};
+  const legacy={version:'4',models:[{...common,id:'native',provider:'xai'},{...common,id:'compatible',provider:'openai',baseUrl:'https://compatible.example/v1'}]};
+  app.store.setConfig('model-configs',legacy);
+  app.store.setConfig('scoring',{...app.store.getConfig('scoring'),researchTurns:3,teamTurns:2});
+  const job=await (await request('/api/screen/jobs','POST',{website:'https://example.org'})).json();
+  const before=app.store.db.prepare('SELECT snapshot FROM screening_jobs WHERE id=?').get(job.id) as any;
+  const reopen=async()=>{
+    await app.close();app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin:'http://localhost'});
+    await new Promise<void>(r=>app.server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(app.server.address() as any).port}`;
+  };
+  await reopen();
+  const migrated=await (await request('/api/admin/model-configs')).json();
+  expect(migrated.version).toBe('5');
+  expect(migrated.models[0]).toMatchObject({provider:'openai',baseUrl:'https://api.x.ai/v1',enabled:false});
+  expect(migrated.models[1]).toMatchObject({provider:'openai',baseUrl:'https://compatible.example/v1',enabled:true});
+  expect(migrated.models.every((m:any)=>!('webSearch' in m)&&!('xSearch' in m)&&!('apiKey' in m))).toBe(true);
+  expect(app.store.decrypt(app.store.getConfig('model-configs').models[0].apiKey)).toBe('legacy-test-secret');
+  expect(app.store.db.prepare('SELECT snapshot FROM screening_jobs WHERE id=?').get(job.id)).toEqual(before);
+  const scoring=await (await request('/api/admin/scoring')).json();
+  expect(scoring.version).toBe('2');expect(scoring).not.toHaveProperty('researchTurns');expect(scoring).not.toHaveProperty('teamTurns');
+  await reopen();expect((await (await request('/api/admin/model-configs')).json()).version).toBe('5');
+  expect((await request('/api/admin/model-configs','PUT',{version:'5',models:legacy.models.map(({webSearch,xSearch,apiKey,...m})=>m)})).status).toBe(400);
 });
 it('executes four explicit demo modes with no fabricated live-search claims and no user follow-up state',async()=>{
   for(const [scenario,mode] of [['standard','standard'],['insufficient','brief_insufficient'],['policy','brief_policy'],['failure','failed']]){
@@ -98,5 +131,7 @@ it('recovers a persisted interrupted job and its original policy snapshot after 
   await app.close();app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin:'http://localhost'});
   await app.runNext();const row=app.store.db.prepare('SELECT * FROM screening_jobs WHERE id=?').get(id) as any;
   expect(row.status).toBe('completed');expect(row.attempts).toBe(2);expect(app.store.decrypt(row.snapshot).policy.prompt).toBe('');
+  expect(app.store.decrypt(app.store.decrypt(row.snapshot).searchApiKey)).toBe('search-test-only');
+  expect(row.snapshot).not.toContain('search-test-only');expect(row.result).not.toContain('search-test-only');
   expect(app.store.getConfig('policy').prompt).toBe('Changed for subsequent tasks only');
 });

@@ -21,7 +21,7 @@ try {
   if (doc.numPages > 40) {
     await task.destroy(); send({ error: 'pdf_page_limit' });
   } else {
-    const pages = []; const unreadable = []; const truncated = [];
+    const pages = []; const unreadable = []; const truncated = []; const failed = [];
     for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber++) {
       try {
         const page = await doc.getPage(pageNumber);
@@ -35,10 +35,10 @@ try {
         if (text.length < 20) unreadable.push(pageNumber);
         if (text) pages.push({ page: pageNumber, text });
         page.cleanup();
-      } catch { unreadable.push(pageNumber); }
+      } catch { failed.push(pageNumber); }
     }
     await task.destroy();
-    send({ pages, unreadable, truncated });
+    send({ pages, unreadable, truncated, failed });
   }
 } catch {
   send({ error: 'invalid_pdf' });

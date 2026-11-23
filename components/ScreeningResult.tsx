@@ -21,7 +21,7 @@ const labels: Record<string, [string, string]> = {
   majorStrengths: ["Major strengths", "主要亮点"],
   majorRisks: ["Major risks", "主要风险"],
   missingMaterials: ["Required materials", "待索取材料"],
-  limitations: ["Technical limitations", "技术限制"],
+  limitations: ["Evidence coverage and execution limitations", "资料覆盖与执行限制"],
   execution: ["Execution metadata", "执行信息"],
   evidence: ["Sources and page map", "来源与页码映射"],
   verified: ["Independently verified", "独立核实"],
@@ -138,15 +138,11 @@ const labels: Record<string, [string, string]> = {
   research: ["Research role", "研究角色"],
   synthesis: ["Synthesis role", "合成角色"],
   enabled: ["Enabled", "启用"],
-  webSearch: ["Enable native web search", "启用原生网页搜索"],
-  xSearch: ["Enable native X search", "启用原生 X 搜索"],
   allowConfidential: ["Allow confidential documents", "允许处理保密文档"],
   definition: ["Sector definition", "赛道定义"],
   conditions: ["Match conditions", "匹配条件"],
   coverageThreshold: ["Coverage threshold", "覆盖率门槛"],
   hardExcludeConfidence: ["Hard-exclusion confidence", "硬排除置信度门槛"],
-  researchTurns: ["Research turn budget", "研究回合预算"],
-  teamTurns: ["Team turn budget", "团队回合预算"],
 };
 export function label(key: string, lang: Lang) {
   return (

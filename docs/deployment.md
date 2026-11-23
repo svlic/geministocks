@@ -11,13 +11,15 @@ For the recommended Docker Compose path, follow the [README deployment instructi
 3. Run `pnpm start` under a restart-capable service manager as a dedicated unprivileged user. It serves `dist/` and `/api/` from port 3001 by default. Set HOST only for the intended private network/interface.
 4. Reverse proxy requests to the backend. Permit at least 25 MiB request bodies; stream uploads rather than buffering through serverless functions. Set upload timeouts compatible with the backend's 30-second request timeout, and test slow-client behavior in your environment.
 5. Firewall direct backend access; use private volume permissions, encrypted storage if required, container CPU/RSS ceilings and outbound egress rules. PDF child heap limits do not cover total native memory. Keep `server/ingestion/pdf-child.mjs`, SQL migration and node_modules in the runtime package.
-6. Verify HttpOnly/SameSite cookies and CSP; HTTPS origins must also set Secure cookies. Verify TLS/HSTS at the outer proxy if used; the application does not emit HSTS. Check anonymous API denial, a private PDF upload, cancellation/restart, TTL cleanup, and admin model connectivity. Test real provider web/X tools with a small approved public sample before allowing private materials.
+6. Verify HttpOnly/SameSite cookies and CSP; HTTPS origins must also set Secure cookies. Verify TLS/HSTS at the outer proxy if used; the application does not emit HSTS. Check anonymous API denial, a private PDF upload, cancellation/restart, TTL cleanup, and admin model connectivity. Test the configured OpenAI-compatible model with a small approved public sample before allowing private materials. Optional public web discovery uses the separate server-side `BRAVE_SEARCH_API_KEY`; verify it with a public domain if configured. Model-native tools and X search are not supported.
 
 The reverse proxy is the sole peer seen by current rate limiting; one admin instance is deliberately conservative. Horizontal scale, per-forwarded-IP trust, distributed queues/object storage and automated USD budget enforcement require a different deployment design.
 
 ## Database initialization / migration
 
 `server/persistence/001_initial.sql` is applied automatically and idempotently on startup, sets SQLite `user_version=1`, and creates admin/session/config/upload/job/usage tables. No manual migration command is needed for a new volume. The initial admin is inserted only if absent; changing `ADMIN_PASSWORD` later does **not** reset it. There is no self-service reset endpoint; an operator must perform a reviewed maintenance procedure if needed.
+
+The OpenAI-compatible-only upgrade also migrates editable JSON settings on startup, once per affected config: remove model search flags and scoring turn budgets, increment their config versions, and convert legacy `xai` entries to disabled `openai` entries while preserving encrypted keys, model IDs and base URLs (defaulting legacy xAI URLs to `https://api.x.ai/v1`). Review the compatible endpoint and explicitly save/re-enable before use. Existing compatible models retain their enabled state. Job snapshots/results are not rewritten; unfinished native jobs cannot use the removed adapter and must be resubmitted under a new snapshot. Back up the DB/key pair before upgrading; roll back with matched pre-upgrade data and code, not by deleting user records.
 
 No migration imports old browser localStorage API keys or stock history. Export anything needed from the old version separately; clear old browser site storage manually after verifying exports. Old browser keys should be rotated/re-entered in the new protected admin if reused. Remove old API/worker routes and deployed proxy rewrites when replacing the old site, not only its static homepage.
 
@@ -27,7 +29,7 @@ Stop the service before backing up a volume or use SQLite's supported online bac
 
 Unused uploads expire after one hour. Extraction is checkpointed encrypted into the task before raw deletion, so an interrupted job can resume. Tasks/results/usage expire 24 hours after submission; sessions expire after eight hours. Startup and worker cleanup remove expired records and orphan files, enable secure-delete and truncate WAL. Service downtime delays cleanup until restart; external snapshots/backups need their own short retention. Parsed text and report data remain sensitive despite raw deletion.
 
-Persisted running tasks return to queued on restart, max two execution attempts. A restart can repeat provider work and incur charges; external model calls are not exactly-once. Job timeout is ten minutes. Per-model timeouts and bounded calls/turns are not a guaranteed monetary cap; set provider-side spend limits. The UI intentionally has no history list.
+Persisted running tasks return to queued on restart, max two execution attempts. A restart can repeat provider work and incur charges; external model calls are not exactly-once. Job timeout is ten minutes. Per-model timeouts and bounded calls are not a guaranteed monetary cap; set provider-side spend limits. The UI intentionally has no history list.
 
 ## Demo and rollback
 

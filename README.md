@@ -33,7 +33,13 @@ pnpm dev
 
 ### 真实研究
 
-将 `DEMO_MODE=false` 后重启后端。在管理员设置添加模型，填写供应商当前支持的 model ID、API Key，分配 `research`、`team`、`synthesis` 角色，保存后测试连接。Key 仅提交给本部署后端，加密落盘，读取只返回掩码。OpenAI 兼容适配器仅支持文本；xAI 使用原生 Responses API 的网页/X 工具。只有所有下游角色明确允许机密处理时，Deck 才会进入模型输入。真实模式出错不会回退演示。
+将 `DEMO_MODE=false` 后重启后端。在管理员设置添加 OpenAI-compatible 模型，填写 Base URL（不含 `/chat/completions`）、供应商当前支持的 model ID、API Key，分配 `research`、`team`、`synthesis` 角色，保存后测试连接。Key 仅提交给本部署后端，加密落盘，读取只返回掩码。模型统一使用文本 Chat Completions，不接入 xAI native 或模型内置网页/X 工具。只有所有下游角色明确允许机密处理时，Deck 才会进入模型输入。真实模式出错不会回退演示。
+
+可选：在服务端 `.env` 设置 `BRAVE_SEARCH_API_KEY` 后重启服务（Compose 已透传）。每轮以提交的官网域名进行一次 Brave 公开网页搜索，最多安全读取 4 个补充来源，总时限 60 秒；PDF 单独提交时，须先在公开官网确认公司身份才能搜索。搜索不发送 Deck、备注、私有路径或查询参数；搜索摘要、模型生成链接不算证据，只有实际抓取且符合 HTTPS/SSRF/robots 限制的页面才进入报告。未配置 Key、搜索失败或没有可读结果均不阻断已有材料分析，报告如实标记搜索状态。不支持 X 搜索。Key 加密保存在新任务快照中，既有任务不改变，无数据库结构迁移。
+
+空白/少字 PDF 页正常保留为覆盖提示，有文本的页照常分析；没有任何可用文本时输出信息不足简报，而不是伪造内容。官网与 PDF 可相互降级；已完成结果不会因为可选来源、团队或综合模块失败而全部清空。证据不足仍可输出产品/赛道事实和未知项，但不强行生成总分。模型格式解析复用现有 JSON 解析器，完整但不符合结构的响应最多纠正一次；网络/超时不盲目重放。模型分析在第 8 分钟停止发起新调用并收紧单次超时，为 10 分钟硬截止前保存受限结果预留时间。真正的解析、配置、模型服务故障仍明确列出，不伪装成研究成功。
+
+升级时旧 xAI native 模型保留密钥、模型 ID 和服务地址，转为兼容配置并停用；管理员确认兼容端点后再保存启用。旧搜索开关及回合设置自动移除，任务快照和历史结果不改写。尚未完成的 native 任务不会静默切换协议，需使用新配置重新提交。升级前请备份数据库及对应加密密钥，详见 [部署与迁移](docs/deployment.md)。
 
 ## Docker Compose 部署（推荐）
 
@@ -114,7 +120,7 @@ docker build -t geministocks:local .
 - React 19 / TypeScript / Vite / Tailwind；浏览器不直连模型，不保存 Key 或长期研究历史。
 - `server/app.ts`：认证 HTTP API、私有直传、持久任务 worker；`server/persistence/`：SQLite migration、会话、加密与 TTL。
 - `server/ingestion/`：防 SSRF 官网抓取、robots 边界、独立子进程 PDF 文本提取。
-- `server/gateway/`：xAI 原生工具与 OpenAI 文本降级；`server/research/`：预筛、团队、综合、证据与后端评分。
+- `server/gateway/`：OpenAI-compatible 文本接入；`server/research/`：预筛、团队、综合、证据与后端评分。
 - `shared/screening-schema.ts` 为前后端契约；`services/` 只保留同源客户端和 Markdown 导出。
 - 常驻 Node **单实例** + 持久卷，不是 Vercel/Workers 临时函数。任务 24 小时过期，原始 PDF 提取后删除，未使用上传 1 小时过期。
 
@@ -128,7 +134,7 @@ pnpm test
 pnpm build
 ```
 
-测试中的 xAI 响应为 mock，**不代表真实付费联网已验收**。当前没有真实凭据，live smoke 和生产 TLS/资源限制仍待部署环境验证。PDF 不做 OCR、图片理解；JS-only/登录/反爬站点会产生限制，不绕过访问控制。模型语义、身份消歧及引用对事实的支持程度仍需人工审阅。
+测试中的模型响应和搜索接口为 mock，**不代表真实付费模型或 Brave 搜索已验收**。真实 PDF 子进程、HTTP 上传/任务/结果落盘和桌面/手机报告导出流程已验证；OpenAI-compatible / Brave live smoke 和生产 TLS/资源限制仍待部署环境验证。PDF 不做 OCR、图片理解；JS-only/登录/反爬站点会产生限制，不绕过访问控制。模型语义、身份消歧及引用对事实的支持程度仍需人工审阅。
 
 ## English
 

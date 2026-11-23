@@ -20,15 +20,13 @@ function mockSettings() {
     models: [
       {
         id: "m",
-        provider: "xai",
+        provider: "openai",
         modelId: "configured-model",
-        baseUrl: "https://api.x.ai/v1",
+        baseUrl: "https://compatible.example/v1",
         roles: ["research"],
         enabled: true,
         timeoutMs: 60000,
         maxOutputTokens: 4000,
-        webSearch: true,
-        xSearch: true,
         allowConfidential: false,
         apiKeyMasked: "****1234",
       },
@@ -53,6 +51,8 @@ it("previews masked model settings, preserves blank keys, saves versioned config
   const fetcher = mockSettings();
   render(<AdminSettings token="csrf" lang="en" />);
   await screen.findByDisplayValue("configured-model");
+  expect(screen.getAllByRole("option").map(option => option.textContent)).toEqual(["OpenAI-compatible"]);
+  expect(screen.queryByLabelText(/native.*search/)).toBeNull();
   expect((screen.getByLabelText(/API key/) as HTMLInputElement).value).toBe("");
   fireEvent.change(screen.getByLabelText("Base URL"), {
     target: { value: "" },

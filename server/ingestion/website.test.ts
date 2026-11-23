@@ -40,6 +40,27 @@ describe('website safety', () => {
     await expect(createWebsiteIngestor({ resolve: async () => [{ address: '8.8.8.8', family: 4 }], request })('https://example.com')).rejects.toMatchObject({ code: 'unsafe_url' });
     expect(request).toHaveBeenCalledTimes(2);
   });
+  it('follows Chinese product links from a sparse homepage while retaining hostname and robots boundaries', async () => {
+    const request = vi.fn(async (url: URL) => ({status:200,headers:{'content-type':url.pathname==='/robots.txt'?'text/plain':'text/html'},body:Buffer.from(
+      url.pathname==='/robots.txt'?'User-agent: *\nDisallow: /blocked':url.pathname==='/'?'<title>公司</title><a href="/chanpin">产品介绍</a><a href="/blocked">团队</a><a href="https://other.example/chanpin">产品</a>':'<p>实际产品、技术和目标客户的公开介绍。</p>'
+    )}));
+    const result=await createWebsiteIngestor({resolve:async()=>[{address:'8.8.8.8',family:4}],request})('https://example.com');
+    expect(result.evidence.map(e=>e.url)).toEqual(['https://example.com/','https://example.com/chanpin']);
+    expect(result.evidence[1].quoteOrSummary).toContain('目标客户');expect(result.limitations.join(' ')).toContain('robots_disallowed');
+  });
+  it('retains retrieved evidence when the overall crawl deadline expires on a secondary page', async () => {
+    const controller=new AbortController();const nativeTimeout=AbortSignal.timeout.bind(AbortSignal);
+    const spy=vi.spyOn(AbortSignal,'timeout').mockImplementation(ms=>ms===110_000?controller.signal:nativeTimeout(ms));
+    try{
+      const request=vi.fn(async(url:URL)=>{
+        if(url.pathname==='/robots.txt')return {status:404,headers:{},body:Buffer.alloc(0)};
+        if(url.pathname==='/about'){controller.abort();throw new Error('timeout');}
+        return {status:200,headers:{'content-type':'text/html'},body:Buffer.from('<p>Actual company product evidence.</p><a href="/about">About</a><a href="/team">Team</a>')};
+      });
+      const result=await createWebsiteIngestor({resolve:async()=>[{address:'8.8.8.8',family:4}],request})('https://example.com');
+      expect(result.evidence).toHaveLength(1);expect(result.evidence[0].quoteOrSummary).toContain('Actual company product evidence');expect(result.limitations.join(' ')).toContain('site_timeout');
+    }finally{spy.mockRestore();}
+  });
   it('does not crawl when robots retrieval fails', async () => {
     const request = vi.fn(async () => ({ status: 503, headers: {}, body: Buffer.alloc(0) }));
     await expect(createWebsiteIngestor({ resolve: async () => [{ address: '8.8.8.8', family: 4 }], request })('https://example.com')).rejects.toMatchObject({ code: 'robots_unavailable' });

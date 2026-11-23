@@ -14,7 +14,7 @@
 - `shared/screening-schema.ts`: Zod contract and default weights.
 - `server/app.ts`, `server/persistence/`: authenticated API, CSRF, private upload streaming, SQLite jobs/configs/sessions and migrations.
 - `server/ingestion/`: untrusted websites/PDFs; keep SSRF/robots/size/child-process limits intact.
-- `server/gateway/`: native xAI Responses tools; OpenAI-compatible is text-only. Tool success requires actual metadata, not prose or enabled flags.
+- `server/gateway/`: OpenAI-compatible text-only Chat Completions. Do not treat model prose or URLs as external search evidence.
 - `server/research/`: bounded orchestration, independent team analysis, policy/sufficiency, evidence checks and backend-only scoring. Never trust model weights or client prompts.
 
 ## Security and persistence

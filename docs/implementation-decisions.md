@@ -1,5 +1,7 @@
 # Implementation decisions
 
+> Historical implementation record. The subsequent OpenAI-compatible-only change removed native xAI/search adapters and turn settings. See [model configuration](model-and-security.md) and [upgrade migration](deployment.md) for the current behavior.
+
 ## S0 — baseline (2026-11-05)
 
 - Source HEAD: `9d71ac57c628f26cd8f5db96bac0b9f43578dc74`.
