@@ -1,7 +1,6 @@
 services:
   app:
     image: ${IMAGE:-ghcr.io/svlic/geministocks:latest}
-    build: .
     init: true
     restart: unless-stopped
     environment:

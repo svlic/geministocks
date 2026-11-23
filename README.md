@@ -37,14 +37,15 @@ pnpm dev
 
 ## Docker Compose 部署（推荐）
 
-要求 Docker Engine 和 Docker Compose v2+，无需在宿主机安装 Node/pnpm。保持**单实例**；SQLite、加密配置和任务数据存放在命名卷 `screening-data`。
+要求 Docker Engine 和 Docker Compose v2+，**无需克隆源码，也无需在宿主机安装 Node/pnpm**。只需部署配置文件，应用代码和运行依赖都已包含在镜像中。保持**单实例**；SQLite、加密配置和任务数据存放在命名卷 `screening-data`。
 
 ### 1. 配置环境
 
 ```bash copy Copy Docker Setup
-git clone https://github.com/svlic/geministocks.git
+mkdir geministocks
 cd geministocks
-cp .env.example .env
+curl -fSL https://raw.githubusercontent.com/svlic/geministocks/main/compose.yaml -o compose.yaml
+curl -fSL https://raw.githubusercontent.com/svlic/geministocks/main/.env.example -o .env
 chmod 600 .env
 openssl rand -hex 32
 ```
@@ -62,12 +63,6 @@ docker compose pull
 docker compose up -d --no-build
 docker compose ps
 docker compose logs --tail=100 app
-```
-
-首次 Actions 成功发布前，或需要运行本地修改时，可直接从源码构建：
-
-```bash copy Copy Build Containers
-docker compose up -d --build --pull never
 ```
 
 如 GHCR 包尚未公开，先在 GitHub Package 设置中设为 Public，或使用具有 `read:packages` 权限的凭据执行 `docker login ghcr.io`。可在 `.env` 中设置 `IMAGE=ghcr.io/svlic/geministocks:1.2.3` 固定版本；生产建议固定版本或 digest，而非一直使用 `latest`。Fork 部署需将 `IMAGE` 改为自己仓库对应的小写 GHCR 路径。
@@ -98,6 +93,18 @@ docker compose up -d --no-build
 
 `docker compose down` 停止并删除容器，但保留数据卷。**不要执行 `docker compose down -v`，它会删除数据库。** 备份前停止应用，备份命名卷，并将对应的 `CONFIG_ENCRYPTION_KEY` 单独安全备份；恢复时使用匹配的数据库/密钥和兼容版本。更改 Compose 项目名或部署目录可能创建新卷，迁移时应显式复用原卷。详见 [部署与迁移](docs/deployment.md)。
 
+### 可选：从源码构建
+
+只有需要修改应用代码或自行构建镜像时，才需要克隆仓库。以下命令在独立的源码目录中构建本地镜像，不影响上面的纯镜像部署方式：
+
+```bash copy Copy Build Local Image
+git clone https://github.com/svlic/geministocks.git geministocks-source
+cd geministocks-source
+docker build -t geministocks:local .
+```
+
+然后回到已配置好 `.env` 的部署目录，将其中的 `IMAGE` 设置为 `geministocks:local`，执行 `docker compose up -d --no-build --pull never`。后续更新本地代码时，需要重新构建镜像。
+
 ### 镜像构建工作流
 
 `.github/workflows/docker.yml` 使用 Buildx + QEMU 构建两个架构：推送 `main` 发布 `latest`、分支及 `sha-*` 标签；推送 `v1.2.3` 等版本标签发布 `1.2.3`、`1.2` 及 `sha-*` 标签（不覆盖 `latest`）；PR 只构建验证、不登录或推送。也支持手动 `workflow_dispatch`。发布使用内置 `GITHUB_TOKEN` 的 `packages: write` 权限，无需另存仓库密码；仓库/组织需允许该权限。
@@ -127,7 +134,7 @@ pnpm build
 
 Private, single-round early-stage company screening. Submit a public HTTPS website and/or PDF deck, wait for a structured report, and export UTF-8 Markdown. Quality score, evidence coverage, and investment-policy fit remain independent. No chat, trading recommendations, news feed, or persistent project library.
 
-For development, run the Node backend and Vite frontend with the commands above. For deployment, configure `.env` with a stable encryption key, strong bootstrap password, HTTPS `APP_ORIGIN` and `DEMO_MODE=false`, then run `docker compose pull && docker compose up -d --no-build` behind an HTTPS reverse proxy. Alternatively build locally with `docker compose up -d --build --pull never`. GHCR images support linux/amd64 and linux/arm64. Keep the named data volume and never use `docker compose down -v` on real data. Configure models through authenticated admin settings. Demo fixtures are explicitly fictional; live failures never silently become demo reports. Read the deployment and acceptance reports before production use.
+For development, run the Node backend and Vite frontend with the commands above. Deployment does not require cloning the repository: download only `compose.yaml` and `.env.example` (save the latter as `.env`), configure a stable encryption key, strong bootstrap password, HTTPS `APP_ORIGIN` and `DEMO_MODE=false`, then run `docker compose pull && docker compose up -d --no-build` behind an HTTPS reverse proxy. Clone the source only if you want to build your own image with `docker build`. GHCR images support linux/amd64 and linux/arm64. Keep the named data volume and never use `docker compose down -v` on real data. Configure models through authenticated admin settings. Demo fixtures are explicitly fictional; live failures never silently become demo reports. Read the deployment and acceptance reports before production use.
 
 ## License
 
