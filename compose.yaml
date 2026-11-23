@@ -8,7 +8,7 @@ services:
       HOST: 0.0.0.0
       PORT: 3001
       DATA_DIR: /data
-      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN to your public HTTPS origin}
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN to your browser-facing origin}
       CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:?Set a stable 64-character hex encryption key}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD to at least 12 characters}

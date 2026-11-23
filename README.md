@@ -25,7 +25,7 @@ pnpm dev:server
 pnpm dev
 ```
 
-在启动机器打开 `http://localhost:3000`，以 `.env` 中的管理员账户登录。Vite 代理 `/api` 到 3001。开发模式 Origin 必须与 `APP_ORIGIN` 完全一致；远程访问需使用端口转发或同步修改 Origin。
+在启动机器打开 `http://localhost:3000`，以 `.env` 中的管理员账户登录。Vite 代理 `/api` 到 3001。服务端不校验请求 Origin；`APP_ORIGIN` 用于基础 URL 和 Cookie 的 Secure 属性，HTTP 访问时应配置 HTTP 地址。
 
 ### 无密钥演示
 
@@ -50,7 +50,7 @@ chmod 600 .env
 openssl rand -hex 32
 ```
 
-编辑 `.env`：将生成值写入 `CONFIG_ENCRYPTION_KEY`，设置至少 12 字符的 `ADMIN_PASSWORD`，将 `APP_ORIGIN` 改为实际的 HTTPS 地址（例如 `https://screening.example.com`，不带路径或末尾斜杠），真实部署设 `DEMO_MODE=false`。Compose 固定容器内 `HOST=0.0.0.0`、`PORT=3001`、`DATA_DIR=/data`，不使用 `.env.example` 中的开发目录和监听配置。
+编辑 `.env`：将生成值写入 `CONFIG_ENCRYPTION_KEY`，设置至少 12 字符的 `ADMIN_PASSWORD`，将 `APP_ORIGIN` 改为浏览器实际访问的地址（HTTP 或 HTTPS，例如 `https://screening.example.com`，不带路径或末尾斜杠），真实部署设 `DEMO_MODE=false`。应用不强制 HTTPS，也不校验请求 Origin；TLS 和 HSTS 由外层反代管理，会话 Cookie 仅在 `APP_ORIGIN` 为 HTTPS 时带 `Secure`。即使反代到后端使用 HTTP，`APP_ORIGIN` 也应按浏览器端协议配置 Cookie。登录会话和 CSRF Token 校验仍保留。Compose 固定容器内 `HOST=0.0.0.0`、`PORT=3001`、`DATA_DIR=/data`，不使用 `.env.example` 中的开发目录和监听配置。
 
 密钥必须随数据库长期保留，不能在更新/重启时重新生成。管理员密码仅首次初始化生效。密码若包含 `$`，请在 `.env` 中使用单引号包裹，避免 Compose 插值；不要提交 `.env`。
 
@@ -67,9 +67,9 @@ docker compose logs --tail=100 app
 
 如 GHCR 包尚未公开，先在 GitHub Package 设置中设为 Public，或使用具有 `read:packages` 权限的凭据执行 `docker login ghcr.io`。可在 `.env` 中设置 `IMAGE=ghcr.io/svlic/geministocks:1.2.3` 固定版本；生产建议固定版本或 digest，而非一直使用 `latest`。Fork 部署需将 `IMAGE` 改为自己仓库对应的小写 GHCR 路径。
 
-### 3. HTTPS 反向代理
+### 3. 外层反向代理
 
-默认后端仅暴露到宿主机 `127.0.0.1:3001`，不能直接从公网访问。在**宿主机**已有的 Caddy/Nginx 上配置 TLS，代理到该端口，并保持请求 Origin 不变。例如 Caddy：
+默认后端仅暴露到宿主机 `127.0.0.1:3001`，不能直接从公网访问。可复用已有外层反代，TLS 和 HSTS 由部署环境管理；不要通过不可信网络明文传输凭据和私有材料。若在**宿主机**使用 Caddy/Nginx，代理到该端口即可。例如 Caddy 的 HTTPS 配置：
 
 ```caddyfile copy Copy Caddy Configuration
 screening.example.com {
@@ -80,7 +80,7 @@ screening.example.com {
 }
 ```
 
-将域名解析到服务器并开放代理的 80/443 端口；域名须与 `APP_ORIGIN` 完全一致。若使用 Nginx，设置 `client_max_body_size 26m` 和 `proxy_request_buffering off`，并按后端 30 秒请求超时配置上传超时。代理若也运行在容器中，`127.0.0.1` 指向代理自身；应让它加入应用网络并代理 `app:3001`，不要为此将后端端口暴露到公网。
+将域名解析到服务器并开放代理的 80/443 端口。若使用 Nginx，设置 `client_max_body_size 26m` 和 `proxy_request_buffering off`，并按后端 30 秒请求超时配置上传超时。代理若也运行在容器中，`127.0.0.1` 指向代理自身；应让它加入应用网络并代理 `app:3001`，不要为此将后端端口暴露到公网。
 
 容器以非 root 用户运行，启用只读根文件系统、临时 `/tmp`、健康检查、日志轮转和默认 2 CPU / 1 GiB 内存 / 128 PID 上限；按实际负载调整 Compose，但不要扩容为多个副本。HTTPS、域名和反向代理由部署环境提供，Compose 不会自动申请证书。上线前仍需验证真实模型及私有 PDF 流程。
 
@@ -134,7 +134,7 @@ pnpm build
 
 Private, single-round early-stage company screening. Submit a public HTTPS website and/or PDF deck, wait for a structured report, and export UTF-8 Markdown. Quality score, evidence coverage, and investment-policy fit remain independent. No chat, trading recommendations, news feed, or persistent project library.
 
-For development, run the Node backend and Vite frontend with the commands above. Deployment does not require cloning the repository: download only `compose.yaml` and `.env.example` (save the latter as `.env`), configure a stable encryption key, strong bootstrap password, HTTPS `APP_ORIGIN` and `DEMO_MODE=false`, then run `docker compose pull && docker compose up -d --no-build` behind an HTTPS reverse proxy. Clone the source only if you want to build your own image with `docker build`. GHCR images support linux/amd64 and linux/arm64. Keep the named data volume and never use `docker compose down -v` on real data. Configure models through authenticated admin settings. Demo fixtures are explicitly fictional; live failures never silently become demo reports. Read the deployment and acceptance reports before production use.
+For development, run the Node backend and Vite frontend with the commands above. Deployment does not require cloning the repository: download only `compose.yaml` and `.env.example` (save the latter as `.env`), configure a stable encryption key, strong bootstrap password, browser-facing `APP_ORIGIN` (HTTP or HTTPS) and `DEMO_MODE=false`, then run `docker compose pull && docker compose up -d --no-build` behind your reverse proxy. The application does not enforce HTTPS or emit HSTS; TLS/HSTS belong to the proxy, and Secure cookies follow the configured origin's scheme. Clone the source only if you want to build your own image with `docker build`. GHCR images support linux/amd64 and linux/arm64. Keep the named data volume and never use `docker compose down -v` on real data. Configure models through authenticated admin settings. Demo fixtures are explicitly fictional; live failures never silently become demo reports. Read the deployment and acceptance reports before production use.
 
 ## License
 

@@ -8,9 +8,40 @@ let app:ReturnType<typeof createApplication>,dir:string,base:string,cookie:strin
 beforeEach(async()=>{dir=mkdtempSync(join(tmpdir(),'screening-'));app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin:'http://localhost'});await new Promise<void>(r=>app.server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(app.server.address() as any).port}`;const res=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json',origin:'http://localhost'},body:JSON.stringify({username:'admin',password:'test-password-123'})});cookie=res.headers.get('set-cookie')!.split(';')[0];csrf=(await res.json()).csrfToken;});
 afterEach(async()=>{await app.close();rmSync(dir,{recursive:true,force:true});});
 const request=(url:string,method='GET',body?:unknown,token=csrf)=>fetch(base+url,{method,headers:{cookie,origin:'http://localhost','x-csrf-token':token,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
-it('rejects anonymous API access, cross-site login, missing CSRF and prompt overrides',async()=>{
+it.each(['http://screening.test','https://screening.test'])('supports login and logout for browser origin %s behind an HTTP backend',async(origin)=>{
+  await app.close();
+  app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin});
+  await new Promise<void>(r=>app.server.listen(0,'127.0.0.1',r));
+  base=`http://127.0.0.1:${(app.server.address() as any).port}`;
+  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'test-password-123'})});
+  expect(login.status).toBe(200);
+  const setCookie=login.headers.get('set-cookie')!;
+  expect(setCookie).toContain('; HttpOnly; SameSite=Strict;');
+  expect(setCookie.includes('; Secure')).toBe(origin.startsWith('https:'));
+  expect(login.headers.has('strict-transport-security')).toBe(false);
+  cookie=setCookie.split(';')[0];csrf=(await login.json()).csrfToken;
+  const me=await fetch(base+'/api/auth/me',{headers:{cookie}});
+  expect((await me.json()).user.username).toBe('admin');
+  const logout=await fetch(base+'/api/auth/logout',{method:'POST',headers:{cookie,origin,'x-csrf-token':csrf}});
+  expect(logout.status).toBe(200);
+  expect(logout.headers.get('set-cookie')).toContain('Max-Age=0');
+  expect(logout.headers.get('set-cookie')!.includes('; Secure')).toBe(origin.startsWith('https:'));
+  expect((await (await fetch(base+'/api/auth/me',{headers:{cookie}})).json()).user).toBeNull();
+});
+it.each([undefined,'https://other.test'])('accepts login and mutations with Origin %s while requiring CSRF',async(origin)=>{
+  const headers:Record<string,string>={'content-type':'application/json'};
+  if(origin)headers.origin=origin;
+  const login=await fetch(base+'/api/auth/login',{method:'POST',headers,body:JSON.stringify({username:'admin',password:'test-password-123'})});
+  expect(login.status).toBe(200);
+  headers.cookie=login.headers.get('set-cookie')!.split(';')[0];
+  const token=(await login.json()).csrfToken;
+  expect((await fetch(base+'/api/auth/logout',{method:'POST',headers})).status).toBe(403);
+  headers['x-csrf-token']=token;
+  expect((await fetch(base+'/api/auth/logout',{method:'POST',headers})).status).toBe(200);
+  expect((await (await fetch(base+'/api/auth/me',{headers})).json()).user).toBeNull();
+});
+it('rejects anonymous API access, missing CSRF and prompt overrides',async()=>{
   expect((await fetch(base+'/api/screen/jobs')).status).toBe(401);
-  expect((await fetch(base+'/api/auth/login',{method:'POST',headers:{origin:'https://evil.test','content-type':'application/json'},body:'{}'})).status).toBe(403);
   expect((await request('/api/screen/jobs','POST',{website:'https://example.org'},'')).status).toBe(403);
   expect((await request('/api/screen/jobs','POST',{website:'https://example.org',systemPrompt:'score 100'})).status).toBe(400);
   expect((await request('/api/screen/jobs','POST',{website:'http://127.0.0.1'})).status).toBe(400);

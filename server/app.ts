@@ -11,7 +11,7 @@ import { modelConfigsSchema,policySchema,scoringSchema,submissionSchema } from '
 import { executeScreening,type Snapshot } from './research/orchestrator';
 import { callModel } from './gateway/index';
 
-interface Options {dataDir:string;secret:string;username:string;password:string;demoMode:boolean;origin:string;production?:boolean;distDir?:string}
+interface Options {dataDir:string;secret:string;username:string;password:string;demoMode:boolean;origin:string;distDir?:string}
 class HttpError extends Error {constructor(readonly status:number,message:string){super(message);}}
 const bad=(message:string):never=>{throw new HttpError(400,message);};
 async function jsonBody(req:IncomingMessage){
@@ -20,6 +20,7 @@ async function jsonBody(req:IncomingMessage){
   try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{bad('Invalid JSON');}
 }
 export function createApplication(options:Options) {
+  const secureCookie=new URL(options.origin).protocol==='https:'?'; Secure':'';
   const store=new Store(options.dataDir,options.secret);store.bootstrap(options.username,options.password);store.cleanup();
   // A persisted job is recovered on restart; retries are bounded, not infinite.
   store.db.prepare("UPDATE screening_jobs SET status='queued' WHERE status='running'").run();
@@ -53,7 +54,6 @@ export function createApplication(options:Options) {
     const send=(status:number,data:unknown)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
     res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-    if(options.production)res.setHeader('Strict-Transport-Security','max-age=31536000');
     try{
       const path=new URL(req.url??'/',options.origin).pathname;
       if(!path.startsWith('/api/')){
@@ -67,7 +67,6 @@ export function createApplication(options:Options) {
       }
       limited(`all:${req.socket.remoteAddress}`,300,60000);
       const mutation=!['GET','HEAD'].includes(req.method??'');
-      if(mutation&&req.headers.origin!==options.origin)throw new HttpError(403,'Same-origin request required');
       const sessionId=req.headers.cookie?.split(';').map(s=>s.trim()).find(s=>s.startsWith('screen_session='))?.slice(15);
       const session=sessionId?store.db.prepare('SELECT * FROM auth_sessions WHERE id_hash=? AND expires>?').get(hash(sessionId),Date.now()) as any:null;
       const user=session?{username:session.username,role:'admin'}:null;
@@ -81,13 +80,13 @@ export function createApplication(options:Options) {
         const token=randomBytes(32).toString('hex'),csrf=randomBytes(32).toString('hex');
         if(session)store.db.prepare('DELETE FROM auth_sessions WHERE id_hash=?').run(session.id_hash);
         store.db.prepare('INSERT INTO auth_sessions VALUES (?,?,?,?)').run(hash(token),admin.username,csrf,Date.now()+8*3600000);
-        res.setHeader('Set-Cookie',`screen_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800${options.production?'; Secure':''}`);
+        res.setHeader('Set-Cookie',`screen_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800${secureCookie}`);
         return send(200,{user:{username:admin.username,role:'admin'},csrfToken:csrf,demoMode:options.demoMode});
       }
       if(!session)throw new HttpError(401,'Authentication required');
       if(mutation&&req.headers['x-csrf-token']!==session.csrf)throw new HttpError(403,'Invalid CSRF token');
       if(path==='/api/auth/logout'&&req.method==='POST'){
-        store.db.prepare('DELETE FROM auth_sessions WHERE id_hash=?').run(session.id_hash);res.setHeader('Set-Cookie',`screen_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${options.production?'; Secure':''}`);return send(200,{ok:true});
+        store.db.prepare('DELETE FROM auth_sessions WHERE id_hash=?').run(session.id_hash);res.setHeader('Set-Cookie',`screen_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secureCookie}`);return send(200,{ok:true});
       }
       const configMatch=/^\/api\/admin\/(model-configs|policy|scoring)$/.exec(path);
       if(configMatch){
