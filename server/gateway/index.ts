@@ -22,7 +22,7 @@ const array = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 function endpoint(config: ModelConfig): string {
   if (config.provider !== 'openai' || typeof config.apiKey !== 'string' || !config.apiKey || typeof config.modelId !== 'string' || !config.modelId || config.modelId.length > 200 ||
     typeof config.allowConfidential !== 'boolean' ||
-    !Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 180_000 ||
+    !Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 600_000 ||
     !Number.isInteger(config.maxOutputTokens) || config.maxOutputTokens < 1 || config.maxOutputTokens > 32_000) throw new GatewayError('invalid_config');
   let url: URL;
   try { url = new URL(config.baseUrl ?? 'https://api.openai.com/v1'); }

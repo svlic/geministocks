@@ -6,7 +6,7 @@ export type Session = {
 export type Job = {
   id: string;
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
-  phase: "reading" | "identity" | "policy" | "research" | "scoring" | "output";
+  phase: "reading" | "understanding" | "identity" | "policy" | "research" | "scoring" | "output";
   error?: string;
 };
 export async function screeningRequest<T>(

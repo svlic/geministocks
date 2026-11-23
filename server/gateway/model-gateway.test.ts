@@ -27,6 +27,11 @@ describe('model gateway', () => {
   it('rejects invalid budgets and non-HTTPS base URL', async () => {
     await expect(callModel({ ...config, maxOutputTokens: 0 }, { system: '', input: '' })).rejects.toMatchObject({ code: 'invalid_config' });
     await expect(callModel({ ...config, baseUrl: 'http://internal/' }, { system: '', input: '' })).rejects.toMatchObject({ code: 'invalid_config' });
+    await expect(callModel({ ...config, timeoutMs: 600001 }, { system: '', input: '' })).rejects.toMatchObject({ code: 'invalid_config' });
+  });
+  it('accepts the extended PDF understanding timeout', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ choices: [{ message: { content: 'Complete answer' } }] })));
+    await expect(callModel({ ...config, timeoutMs: 300000 }, { system: '', input: '' })).resolves.toMatchObject({ text: 'Complete answer' });
   });
   it('aborts within timeout and does not retry ambiguous network failures', async () => {
     const fetcher = vi.fn((_url, init) => new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(new Error('abort')))));

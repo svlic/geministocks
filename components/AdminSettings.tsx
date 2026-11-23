@@ -3,6 +3,7 @@ import { screeningRequest } from "../services/screeningClient";
 import { label, type Lang } from "./ScreeningResult";
 import {
   modelConfigsSchema,
+  pdfUnderstandingTimeoutSchema,
   policySchema,
   scoringSchema,
 } from "../shared/screening-schema";
@@ -31,7 +32,11 @@ type Rule = {
   priority: number;
   notes: string;
 };
-type Models = { version: string; models: Model[] };
+type Models = {
+  version: string;
+  pdfUnderstandingTimeoutMs: number;
+  models: Model[];
+};
 type Policy = { version: string; prompt: string; rules: Rule[] };
 type Scoring = {
   version: string;
@@ -75,7 +80,10 @@ export default function AdminSettings({
     ])
       .then(([m, p, s]) => {
         if (active) {
-          setModels(m);
+          setModels({
+            ...m,
+            pdfUnderstandingTimeoutMs: pdfUnderstandingTimeoutSchema.parse(m.pdfUnderstandingTimeoutMs),
+          });
           setPolicy(p);
           setScoring(s);
         }
@@ -296,6 +304,25 @@ export default function AdminSettings({
                     {t(
                       "OpenAI-compatible text analysis only; public web search is configured separately on the server. No X search. Blank API key preserves the stored secret. Save before testing the connection.",
                       "模型仅支持 OpenAI-compatible 文本分析；公开网页搜索由服务端单独配置，不支持 X 搜索。API 密钥留空则保留原密钥。请先保存再测试连接。",
+                    )}
+                  </p>
+                  <label>
+                    {t("PDF understanding budget (minutes)", "PDF 理解预算（分钟）")}
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      step={1}
+                      value={models.pdfUnderstandingTimeoutMs / 60000}
+                      onChange={(e) =>
+                        setModels({ ...models, pdfUnderstandingTimeoutMs: Number(e.target.value) * 60000 })
+                      }
+                    />
+                  </label>
+                  <p className="muted">
+                    {t(
+                      "Default 5 minutes, up to 10. The first model pass over permitted PDF text, including one format correction, shares this budget instead of the model timeout. Its actual duration is excluded from the 8-minute analysis and 10-minute hard limits. Later calls use the normal limits. New jobs only.",
+                      "默认 5 分钟，最多 10 分钟。首次模型理解获准 PDF 文本及一次格式纠正共用此预算，不受模型普通超时限制；实际用时不计入 8 分钟分析与 10 分钟硬上限。后续调用仍用原限制，仅对新任务生效。",
                     )}
                   </p>
                   {models.models.map((m, i) => (

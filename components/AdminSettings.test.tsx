@@ -54,6 +54,10 @@ it("previews masked model settings, preserves blank keys, saves versioned config
   expect(screen.getAllByRole("option").map(option => option.textContent)).toEqual(["OpenAI-compatible"]);
   expect(screen.queryByLabelText(/native.*search/)).toBeNull();
   expect((screen.getByLabelText(/API key/) as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("PDF understanding budget (minutes)") as HTMLInputElement).value).toBe("5");
+  fireEvent.change(screen.getByLabelText("PDF understanding budget (minutes)"), {
+    target: { value: "7" },
+  });
   fireEvent.change(screen.getByLabelText("Base URL"), {
     target: { value: "" },
   });
@@ -66,6 +70,7 @@ it("previews masked model settings, preserves blank keys, saves versioned config
   const put = fetcher.mock.calls.find(
     ([, options]) => options?.method === "PUT",
   )!;
+  expect(JSON.parse(put[1]!.body as string).pdfUnderstandingTimeoutMs).toBe(420000);
   expect(JSON.parse(put[1]!.body as string).models[0]).not.toHaveProperty(
     "apiKey",
   );

@@ -78,7 +78,7 @@ it("protects the form behind login", async () => {
   expect(await screen.findByLabelText(/Username/)).toBeTruthy();
   expect(screen.queryByLabelText(/Website URL/)).toBeNull();
 });
-it("locks submitted inputs, displays server phase and supports cancellation", async () => {
+it.each(["identity", "understanding"])("locks submitted inputs, displays server phase %s and supports cancellation", async (phase) => {
   let cancelled = false;
   const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
     if (url.endsWith("/cancel")) cancelled = true;
@@ -97,7 +97,7 @@ it("locks submitted inputs, displays server phase and supports cancellation", as
           : {
               id: "job",
               status: cancelled ? "cancelled" : "running",
-              phase: "identity",
+              phase,
             },
       ),
     );
@@ -118,7 +118,7 @@ it("locks submitted inputs, displays server phase and supports cancellation", as
   ]) {
     expect(screen.getByLabelText(input).matches(":disabled")).toBe(true);
   }
-  expect(screen.getByRole("status").textContent).toContain("Confirm identity");
+  expect(screen.getByRole("status").textContent).toContain(phase === "understanding" ? "Understand PDF" : "Confirm identity");
   expect(screen.queryByText(/Continue chat/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /Cancel task/ }));
   await screen.findByText(/Cancelled. Temporary attachments/);

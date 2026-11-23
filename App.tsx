@@ -14,6 +14,7 @@ import {
 
 const phases = [
   "reading",
+  "understanding",
   "identity",
   "policy",
   "research",
@@ -23,6 +24,7 @@ const phases = [
 const phaseNames = {
   en: [
     "Read materials",
+    "Understand PDF",
     "Confirm identity",
     "Match policy",
     "Analyze evidence",
@@ -31,6 +33,7 @@ const phaseNames = {
   ],
   zh: [
     "读取资料",
+    "理解 PDF",
     "确认项目身份",
     "策略匹配",
     "证据分析",

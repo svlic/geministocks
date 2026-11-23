@@ -52,7 +52,7 @@ it('distinguishes provider 503 from company information gaps without demo fallba
 it('omits confidential data from every role when one downstream role is not permitted',async()=>{
   snapshot.models[0].allowConfidential=false;writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');
   await run({website:'https://public.example.org',uploadId:'deck'});
-  for(const c of mocks.call.mock.calls)expect(c[1].input).not.toContain('SECRET-DECK-CONTENT');
+  for(const c of mocks.call.mock.calls){expect(c[1].input).not.toContain('SECRET-DECK-CONTENT');expect(c[0].timeoutMs).toBeLessThanOrEqual(10000);}
 });
 it('rejects invented ledger IDs instead of publishing fake verified conclusions',async()=>{
   fixture.majorStrengths=[{text:'Invented source claim',verification:'verified',evidenceIds:['nonexistent']}];
@@ -165,6 +165,65 @@ it('returns validated results before the hard job deadline instead of losing the
     const result=await run();expect(result.mode).toBe('partial_error');expect(result.company!.name).toBe(fixture.company!.name);
     expect(result.dimensions.find(d=>d.id==='product_technology')!.score0to5).not.toBeNull();expect(result.limitations.join(' ')).toContain('analysis_time_budget_exceeded');
   }finally{clock.mockRestore();}
+});
+
+it.each([undefined,420000])('uses one separate PDF understanding budget (%s) without reducing the analysis allowance',async budget=>{
+  snapshot.pdfUnderstandingTimeoutMs=budget;snapshot.models[0].timeoutMs=120000;
+  writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');
+  // Keep scoring evidence bound to the PDF even when the website returns no text.
+  mocks.pdf.mockResolvedValue({evidence:fixture.evidence.map(e=>({...e,type:'uploaded_deck',url:null,documentId:'deck',page:1})),limitations:[]});
+  const previous=mocks.call.getMockImplementation()!,clock=vi.spyOn(Date,'now');let now=Date.now();const start=now;
+  clock.mockImplementation(()=>now);
+  try{
+    mocks.website.mockImplementation(async()=>{now+=60000;return {evidence:[],limitations:[]};});
+    mocks.call.mockImplementation(async(config,request)=>{
+      const duration=request.system.includes('Extract company identity')?(budget?360000:240000):120000;
+      if(config.timeoutMs<duration)throw Object.assign(new Error('timeout'),{code:'timeout'});
+      now+=duration;return previous(config,request);
+    });
+    const result=await run({uploadId:'deck',website:'https://public.example.org'});
+    expect(result.mode).toBe('standard');expect(result.productAndTechnology).toEqual(fixture.productAndTechnology);
+    expect(result.execution.elapsedMs).toBe(budget?660000:540000);expect(now-start).toBe(budget?660000:540000);
+  }finally{clock.mockRestore();}
+});
+
+it('shares the PDF deadline with format correction and reports exhaustion without replaying a timeout',async()=>{
+  writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');snapshot.pdfUnderstandingTimeoutMs=60000;
+  const clock=vi.spyOn(Date,'now');let now=Date.now();clock.mockImplementation(()=>now);
+  const budgets:number[]=[];
+  try{
+    mocks.call.mockImplementation(async config=>{
+      budgets.push(config.timeoutMs);
+      if(budgets.length===1){now+=45000;return {text:'{}',elapsedMs:45000,usage:null};}
+      now+=15000;throw Object.assign(new Error('private upstream detail'),{code:'timeout'});
+    });
+    const result=await run({uploadId:'deck'});
+    expect(budgets).toEqual([60000,15000]);expect(result.mode).toBe('failed');
+    expect(result.limitations.join(' ')).toContain('pdf_understanding_time_budget_exceeded');
+    expect(JSON.stringify(result)).not.toContain('private upstream detail');
+  }finally{clock.mockRestore();}
+});
+
+it('keeps PDF enrichment calls on the normal model timeout after the initial understanding pass',async()=>{
+  fixture.company!.website='https://public.example.org';writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');
+  mocks.pdf.mockResolvedValue({evidence:fixture.evidence.map(e=>({...e,type:'uploaded_deck',url:null,documentId:'deck',page:1,quoteOrSummary:e.quoteOrSummary+' https://public.example.org'})),limitations:[]});
+  mocks.website.mockResolvedValue({evidence:[{...fixture.evidence[0],id:'public-site',quoteOrSummary:fixture.company!.name!}],limitations:[]});
+  const previous=mocks.call.getMockImplementation()!;let passes=0;
+  mocks.call.mockImplementation(async(config,request)=>{
+    if(request.system.includes('Extract company identity')&&++passes===2){
+      expect(config.timeoutMs).toBe(10000);throw Object.assign(new Error('timeout'),{code:'timeout'});
+    }
+    return previous(config,request);
+  });
+  const result=await run({uploadId:'deck'});
+  expect(passes).toBe(2);expect(result.mode).toBe('standard');expect(result.limitations.join(' ')).toContain('identity_enrichment_failed (timeout)');
+});
+
+it('honors cancellation during the independently budgeted PDF understanding pass',async()=>{
+  writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');const controller=new AbortController();
+  mocks.call.mockImplementation(async()=>{controller.abort();throw new Error('cancelled');});
+  await expect(executeScreening(store,{id:'job',input:JSON.stringify({uploadId:'deck'})},snapshot,()=>{},controller.signal)).rejects.toThrow();
+  expect(existsSync(join(store.uploadsDir,'deck'))).toBe(false);
 });
 
 it('does not lose identity and dimensions if optional public identity enrichment fails',async()=>{

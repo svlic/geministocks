@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
 import { z } from 'zod';
 import { Store,hash,verifyPassword,passwordHash } from './persistence/store';
-import { modelConfigsSchema,policySchema,scoringSchema,submissionSchema } from '../shared/screening-schema';
+import { modelConfigsSchema,pdfUnderstandingTimeoutSchema,policySchema,scoringSchema,submissionSchema } from '../shared/screening-schema';
 import { executeScreening,type Snapshot } from './research/orchestrator';
 import { callModel } from './gateway/index';
 
@@ -28,7 +28,7 @@ export function createApplication(options:Options) {
   const dummyPassword=passwordHash(randomBytes(24).toString('hex'));
   let active:{id:string;controller:AbortController;promise?:Promise<void>}|undefined;
   const limited=(key:string,max:number,period:number)=>{const now=Date.now();for(const [k,v]of buckets)if(v.until<now)buckets.delete(k);const b=buckets.get(key)??{count:0,until:now+period};buckets.set(key,b);if(++b.count>max)throw new HttpError(429,'Rate limit exceeded');};
-  const modelsView=()=>{const c=store.getConfig('model-configs');return {...c,models:c.models.map(({apiKey,...m}:any)=>({...m,apiKeyMasked:apiKey?'••••••••':''}))};};
+  const modelsView=()=>{const c=store.getConfig('model-configs');return {...c,pdfUnderstandingTimeoutMs:pdfUnderstandingTimeoutSchema.parse(c.pdfUnderstandingTimeoutMs),models:c.models.map(({apiKey,...m}:any)=>({...m,apiKeyMasked:apiKey?'••••••••':''}))};};
   const deleteJobUpload=(job:any)=>{const input=JSON.parse(job.input);if(input.uploadId)store.deleteUpload(input.uploadId);};
   const runNext=async()=>{
     if(active){await active.promise;return;}
@@ -38,10 +38,22 @@ export function createApplication(options:Options) {
     if(job.attempts>=2){store.db.prepare("UPDATE screening_jobs SET status='failed',error='recovery_limit_exceeded' WHERE id=?").run(job.id);deleteJobUpload(job);return;}
     const controller=new AbortController();active={id:job.id,controller};
     store.db.prepare("UPDATE screening_jobs SET status='running',attempts=attempts+1 WHERE id=?").run(job.id);
-    const timeout=setTimeout(()=>controller.abort(new Error('job_timeout')),10*60*1000);
+    let deadline=Date.now()+10*60*1000,understandingStarted:number|undefined;
+    const abort=()=>controller.abort(new Error('job_timeout'));
+    let timeout=setTimeout(abort,10*60*1000);
     const promise=(async()=>{
       try{
-        const result=await executeScreening(store,job,store.decrypt<Snapshot>(job.snapshot),p=>{controller.signal.throwIfAborted();store.db.prepare('UPDATE screening_jobs SET phase=? WHERE id=?').run(p,job.id);},controller.signal);
+        const result=await executeScreening(store,job,store.decrypt<Snapshot>(job.snapshot),p=>{
+          controller.signal.throwIfAborted();
+          if(p==='understanding'&&understandingStarted===undefined){
+            understandingStarted=Date.now();clearTimeout(timeout);
+          }else if(p!=='understanding'&&understandingStarted!==undefined){
+            // Exclude only actual PDF understanding time; do not reset the job budget.
+            deadline+=Date.now()-understandingStarted;understandingStarted=undefined;
+            timeout=setTimeout(abort,Math.max(0,deadline-Date.now()));
+          }
+          store.db.prepare('UPDATE screening_jobs SET phase=? WHERE id=?').run(p,job.id);
+        },controller.signal);
         store.db.prepare("UPDATE screening_jobs SET status='completed',phase='output',result=?,error=NULL WHERE id=? AND status='running'").run(JSON.stringify(result),job.id);
       }catch{
         store.db.prepare("UPDATE screening_jobs SET status='failed',error='job_execution_failed_or_timeout' WHERE id=? AND status='running'").run(job.id);
@@ -148,7 +160,8 @@ export function createApplication(options:Options) {
         }
         if((store.db.prepare("SELECT count(*) AS n FROM screening_jobs WHERE owner=? AND status IN ('queued','running')").get(user!.username) as any).n>=4)throw new HttpError(429,'Too many pending jobs');
         if(input.uploadId){const upload=store.db.prepare('SELECT * FROM uploads WHERE id=? AND owner=? AND ready=1 AND expires>?').get(input.uploadId,user!.username,Date.now());if(!upload)bad('PDF not uploaded or already assigned');}
-        const id=randomUUID(),snapshot:Snapshot={models:store.getConfig('model-configs').models,policy:store.getConfig('policy'),scoring:store.getConfig('scoring'),demoMode:options.demoMode,...(options.searchApiKey?{searchApiKey:store.encrypt(options.searchApiKey)}:{})};
+        const models=store.getConfig('model-configs');
+        const id=randomUUID(),snapshot:Snapshot={models:models.models,pdfUnderstandingTimeoutMs:pdfUnderstandingTimeoutSchema.parse(models.pdfUnderstandingTimeoutMs),policy:store.getConfig('policy'),scoring:store.getConfig('scoring'),demoMode:options.demoMode,...(options.searchApiKey?{searchApiKey:store.encrypt(options.searchApiKey)}:{})};
         store.db.exec('BEGIN IMMEDIATE');try{store.db.prepare('INSERT INTO screening_jobs(id,owner,status,phase,input,snapshot,expires) VALUES (?,?,?,?,?,?,?)').run(id,user!.username,'queued','reading',JSON.stringify(input),store.encrypt(snapshot),Date.now()+86400000);if(input.uploadId)store.db.prepare('UPDATE uploads SET ready=2 WHERE id=?').run(input.uploadId);store.db.exec('COMMIT');}catch(e){store.db.exec('ROLLBACK');throw e;}
         return send(202,{id,status:'queued',phase:'reading'});
       }

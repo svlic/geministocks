@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from './app';
 import { fictionalDeck } from './test-fixtures';
+import * as orchestrator from './research/orchestrator';
 let app:ReturnType<typeof createApplication>,dir:string,base:string,cookie:string,csrf:string;
 beforeEach(async()=>{dir=mkdtempSync(join(tmpdir(),'screening-'));app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin:'http://localhost',searchApiKey:'search-test-only'});await new Promise<void>(r=>app.server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(app.server.address() as any).port}`;const res=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json',origin:'http://localhost'},body:JSON.stringify({username:'admin',password:'test-password-123'})});cookie=res.headers.get('set-cookie')!.split(';')[0];csrf=(await res.json()).csrfToken;});
 afterEach(async()=>{await app.close();rmSync(dir,{recursive:true,force:true});});
@@ -53,6 +54,37 @@ it('encrypts stored keys, masks reads and persists configuration',async()=>{
   expect(readFileSync(join(dir,'screening.sqlite')).includes(Buffer.from('secret-for-test-only'))).toBe(false);
   expect(app.store.getConfig('model-configs').models[0].apiKey).not.toBe('secret-for-test-only');
 });
+it('defaults and snapshots the PDF understanding budget without changing existing jobs',async()=>{
+  const initial=await (await request('/api/admin/model-configs')).json();expect(initial.pdfUnderstandingTimeoutMs).toBe(300000);
+  const first=await (await request('/api/screen/jobs','POST',{website:'https://example.org'})).json();
+  for(const value of [0,59999,600001])expect((await request('/api/admin/model-configs','PUT',{...initial,pdfUnderstandingTimeoutMs:value})).status).toBe(400);
+  const saved=await request('/api/admin/model-configs','PUT',{...initial,pdfUnderstandingTimeoutMs:420000});expect(saved.status).toBe(200);
+  expect((await saved.json()).pdfUnderstandingTimeoutMs).toBe(420000);
+  const second=await (await request('/api/screen/jobs','POST',{website:'https://example.org'})).json();
+  const snapshot=(id:string)=>app.store.decrypt((app.store.db.prepare('SELECT snapshot FROM screening_jobs WHERE id=?').get(id) as any).snapshot);
+  expect(snapshot(first.id).pdfUnderstandingTimeoutMs).toBe(300000);expect(snapshot(second.id).pdfUnderstandingTimeoutMs).toBe(420000);
+  expect((await request('/api/screen/jobs','POST',{website:'https://example.org',pdfUnderstandingTimeoutMs:600000})).status).toBe(400);
+});
+
+it('excludes actual PDF understanding time from the worker hard deadline without resetting earlier elapsed time',async()=>{
+  const {id}=await (await request('/api/screen/jobs','POST',{website:'https://example.org'})).json();
+  const execute=vi.spyOn(orchestrator,'executeScreening').mockImplementation(async(_store,_job,_snapshot,phase,signal)=>{
+    await new Promise(r=>setTimeout(r,60000));
+    phase('understanding');await new Promise(r=>setTimeout(r,240000));phase('identity');
+    return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+  });
+  vi.useFakeTimers({toFake:['Date','setTimeout','clearTimeout']});
+  try{
+    const running=app.runNext();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect((app.store.db.prepare('SELECT phase FROM screening_jobs WHERE id=?').get(id) as any).phase).toBe('understanding');
+    await vi.advanceTimersByTimeAsync(240000+539999);
+    expect((app.store.db.prepare('SELECT status FROM screening_jobs WHERE id=?').get(id) as any).status).toBe('running');
+    await vi.advanceTimersByTimeAsync(1);await running;
+    expect((app.store.db.prepare('SELECT status FROM screening_jobs WHERE id=?').get(id) as any).status).toBe('failed');
+  }finally{execute.mockRestore();vi.useRealTimers();}
+});
+
 it('accepts transient website DNS failures but still rejects unsafe addresses at submission',async()=>{
   const ingestion=await import('./ingestion/index');
   const check=vi.spyOn(ingestion,'assertPublicUrl').mockRejectedValueOnce(new ingestion.IngestionError('site_network_error','transient')).mockRejectedValueOnce(new ingestion.IngestionError('unsafe_address','private'));

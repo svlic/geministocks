@@ -60,5 +60,6 @@ export const policySchema = z.object({ version:text, prompt:z.string().max(12000
 export type PolicyConfig = z.infer<typeof policySchema>;
 export const modelSchema = z.object({ id:z.string().min(1).max(100), provider:z.literal('openai'), modelId:z.string().min(1).max(100), baseUrl:z.string().url().optional(), roles:z.array(z.enum(['research','team','synthesis'])).min(1), enabled:z.boolean(), timeoutMs:z.number().int().min(1000).max(120000),maxOutputTokens:z.number().int().min(256).max(16000),allowConfidential:z.boolean(),apiKey:z.string().max(1000).optional(),apiKeyMasked:z.string().optional() }).strict();
 export type ModelConfig = z.infer<typeof modelSchema>;
-export const modelConfigsSchema = z.object({version:text,models:z.array(modelSchema).max(10)}).strict().refine(c=>new Set(c.models.map(m=>m.id)).size===c.models.length,'Duplicate model IDs');
+export const pdfUnderstandingTimeoutSchema = z.number().int().min(60000).max(600000).default(300000);
+export const modelConfigsSchema = z.object({version:text,pdfUnderstandingTimeoutMs:pdfUnderstandingTimeoutSchema,models:z.array(modelSchema).max(10)}).strict().refine(c=>new Set(c.models.map(m=>m.id)).size===c.models.length,'Duplicate model IDs');
 export const submissionSchema = z.object({website:publicUrl.optional(),uploadId:z.string().uuid().optional(),note:z.string().max(500).optional(),stage:stageSchema.default('unknown'),demoScenario:z.enum(['standard','insufficient','policy','failure']).optional()}).strict().refine(v=>!!v.website||!!v.uploadId,'Website or PDF required');
