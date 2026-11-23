@@ -65,4 +65,9 @@ describe('structured model answers', () => {
   it('rejects prose instead of treating it as a report', () => {
     expect(() => parseModelJson('Sorry, I cannot produce a report.')).toThrow();
   });
+  it('extracts a prose-prefixed array and repairs incomplete structured answers', () => {
+    expect(parseModelJson('Results: [3, 7] trailing prose')).toEqual([3, 7]);
+    expect(parseModelJson('{"summary":"fixture", "values":[7,2')).toEqual({ summary: 'fixture', values: [7, 2] });
+    expect(parseModelJson('{summary: "fixture", count: 3,}')).toEqual({ summary: 'fixture', count: 3 });
+  });
 });

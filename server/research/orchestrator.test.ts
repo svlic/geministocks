@@ -1,5 +1,5 @@
 import { beforeEach,afterEach,it,expect,vi } from 'vitest';
-import { mkdtempSync,rmSync,writeFileSync } from 'node:fs';
+import { existsSync,mkdtempSync,rmSync,writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../persistence/store';
@@ -200,4 +200,52 @@ it('never searches using unconfirmed PDF-only identity, notes or private URLs',a
 it('propagates cancellation instead of publishing an incomplete successful report',async()=>{
   const controller=new AbortController();mocks.website.mockImplementation(async()=>{controller.abort();throw new Error('cancelled');});
   await expect(executeScreening(store,{id:'job',input:JSON.stringify({website:'https://public.example.org'})},snapshot,()=>{},controller.signal)).rejects.toThrow();
+});
+
+it('retains earlier dimensions when synthesis repeats a scoring dimension',async()=>{
+  const previous=mocks.call.getMockImplementation()!;
+  mocks.call.mockImplementation(async(config,request)=>{
+    const response=await previous(config,request);
+    if(!request.system.includes('Extract company identity')&&!request.system.includes('Independently screen only')){
+      const report=JSON.parse(response.text);report.dimensions[2]={...report.dimensions[1],score0to5:1};response.text=JSON.stringify(report);
+    }
+    return response;
+  });
+  const result=await run();
+  expect(result.mode).toBe('partial_error');
+  expect(result.dimensions).toHaveLength(6);
+  expect(result.dimensions.find(d=>d.id==='product_technology')!.score0to5).toBe(4);
+  expect(result.limitations.join(' ')).toContain('synthesis_module_failed (invalid_dimensions)');
+});
+
+it('removes private PDF bytes before provider analysis and restores extracted evidence after reopening the store',async()=>{
+  const input={website:'https://public.example.org',uploadId:'deck'};
+  const path=join(store.uploadsDir,'deck');writeFileSync(path,'%PDF-fixture');
+  store.db.prepare('UPDATE screening_jobs SET input=? WHERE id=?').run(JSON.stringify(input),'job');
+  const previous=mocks.call.getMockImplementation()!;
+  let privateBytesObserved=false;
+  mocks.call.mockImplementation(async(config,request)=>{
+    privateBytesObserved ||= existsSync(path);
+    return previous(config,request);
+  });
+  const first=await run(input);
+  expect(privateBytesObserved).toBe(false);
+  expect(first.evidence.some(e=>e.id==='private')).toBe(true);
+  expect(existsSync(path)).toBe(false);
+  store.close();store=new Store(dir,'cd'.repeat(32));
+  const recovered=store.db.prepare('SELECT * FROM screening_jobs WHERE id=?').get('job');
+  const result=await executeScreening(store,recovered,snapshot,()=>{},new AbortController().signal);
+  expect(result.mode).toBe('standard');
+  expect(result.evidence).toEqual(first.evidence);
+  expect(result.limitations.join(' ')).not.toContain('pdf_read_failed');
+});
+
+it('still removes private PDF bytes if the first cleanup attempt fails',async()=>{
+  const path=join(store.uploadsDir,'deck');writeFileSync(path,'%PDF-fixture');
+  const cleanup=vi.spyOn(store,'deleteUpload').mockImplementationOnce(()=>{throw new Error('transient cleanup failure');});
+  try{
+    const result=await run({uploadId:'deck'});
+    expect(result.mode).toBe('failed');
+    expect(existsSync(path)).toBe(false);
+  }finally{cleanup.mockRestore();}
 });
