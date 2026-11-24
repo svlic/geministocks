@@ -3,7 +3,7 @@ export interface ModelConfig {
   timeoutMs: number; maxOutputTokens: number; allowConfidential: boolean;
 }
 export type GatewayConfig = ModelConfig;
-export interface ModelRequest { system: string; input: string; signal?: AbortSignal }
+export interface ModelRequest { system: string; input: string; signal?: AbortSignal; webSearch?: boolean }
 export interface ModelResult {
   text: string; citations: Array<{ url: string; title: string }>; usage: unknown;
   searchUsed: boolean; xSearchUsed: boolean; elapsedMs: number;
@@ -19,7 +19,7 @@ export class GatewayError extends Error {
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const array = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 
-function endpoint(config: ModelConfig): string {
+function endpoint(config: ModelConfig, webSearch: boolean): string {
   if (config.provider !== 'openai' || typeof config.apiKey !== 'string' || !config.apiKey || typeof config.modelId !== 'string' || !config.modelId || config.modelId.length > 200 ||
     typeof config.allowConfidential !== 'boolean' ||
     !Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 600_000 ||
@@ -28,7 +28,7 @@ function endpoint(config: ModelConfig): string {
   try { url = new URL(config.baseUrl ?? 'https://api.openai.com/v1'); }
   catch { throw new GatewayError('invalid_config'); }
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || (url.port && url.port !== '443')) throw new GatewayError('invalid_config');
-  return `${url.href.replace(/\/$/, '')}/chat/completions`;
+  return `${url.href.replace(/\/$/, '')}/${webSearch ? 'responses' : 'chat/completions'}`;
 }
 function httpError(status: number): GatewayError {
   const code: GatewayErrorCode = status === 401 ? 'authentication' : status === 403 ? 'permission' : status === 404 ? 'model_not_found' : status === 429 ? 'rate_limit' : status >= 500 ? 'unavailable' : 'unsupported_request';
@@ -70,10 +70,12 @@ async function readJson(response: Response, signal: AbortSignal): Promise<unknow
  */
 export async function callModel(config: ModelConfig, request: ModelRequest): Promise<ModelResult> {
   const started = performance.now();
-  const url = endpoint(config);
+  const url = endpoint(config, request.webSearch === true);
   if (typeof request.system !== 'string' || typeof request.input !== 'string' || request.system.length + request.input.length > 500_000) throw new GatewayError('invalid_config');
   const messages = [{ role: 'system', content: request.system }, { role: 'user', content: request.input }];
-  const body = { model: config.modelId, messages, max_tokens: config.maxOutputTokens };
+  const body = request.webSearch
+    ? { model: config.modelId, input: messages, tools: [{ type: 'web_search' }], tool_choice: 'required', max_tool_calls: 6, max_output_tokens: config.maxOutputTokens }
+    : { model: config.modelId, messages, max_tokens: config.maxOutputTokens };
   const timeout = AbortSignal.timeout(config.timeoutMs);
   const signal = request.signal ? AbortSignal.any([timeout, request.signal]) : timeout;
   const aborted = () => { if (request.signal?.aborted) throw new GatewayError('cancelled'); if (timeout.aborted) throw new GatewayError('timeout', true); };
@@ -97,6 +99,34 @@ export async function callModel(config: ModelConfig, request: ModelRequest): Pro
       }
       const data = object(await readJson(response, signal));
       aborted();
+      if (request.webSearch) {
+        if (data.status !== 'completed' || data.error) throw new GatewayError('incomplete');
+        const output = array(data.output).map(object);
+        const searches = output.filter(item => item.type === 'web_search_call' && item.status === 'completed');
+        const searchUsed = searches.length > 0;
+        const queries = searches.flatMap(item => {
+          const action = object(item.action);
+          return [action.query, ...array(action.queries)];
+        });
+        // X/Twitter coverage is about the searched site, not a native x_search tool name.
+        const xSearchUsed = queries.some(query => typeof query === 'string' && /(?:^|\s|https?:\/\/|site:)(?:www\.)?(?:x\.com|twitter\.com)(?=\/|\s|$)/i.test(query));
+        const parts = output.filter(item => item.type === 'message' && item.role === 'assistant')
+          .flatMap(item => array(item.content).map(object)).filter(part => part.type === 'output_text');
+        const text = parts.map(part => typeof part.text === 'string' ? part.text : '').join('\n');
+        if (!text.trim()) throw new GatewayError('invalid_response');
+        const citations: ModelResult['citations'] = [];
+        if (searchUsed) for (const annotation of parts.flatMap(part => array(part.annotations).map(object))) {
+          if (annotation.type !== 'url_citation' || typeof annotation.url !== 'string') continue;
+          try {
+            const source = new URL(annotation.url);
+            if (source.protocol !== 'https:' || source.username || source.password || source.port && source.port !== '443') continue;
+            source.hash = '';
+            if (citations.length >= 24 || citations.some(c => c.url === source.href)) continue;
+            citations.push({ url: source.href, title: typeof annotation.title === 'string' ? annotation.title.slice(0, 300) : source.hostname });
+          } catch { /* Invalid citations are not discovery candidates. */ }
+        }
+        return { text, citations, usage: data.usage ?? null, searchUsed, xSearchUsed, elapsedMs: Math.round(performance.now() - started) };
+      }
       const choice = object(array(data.choices)[0]);
       if (choice.finish_reason === 'length' || choice.finish_reason === 'content_filter') throw new GatewayError('incomplete');
       const text = object(choice.message).content;

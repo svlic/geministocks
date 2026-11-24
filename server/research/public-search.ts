@@ -1,46 +1,28 @@
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
 import { fetchPublicPage, validateWebsiteUrl } from '../ingestion/website';
+import { callModel, type GatewayConfig } from '../gateway/index';
 import type { Evidence } from '../../shared/screening-schema';
+import { PUBLIC_RESEARCH_PROMPT } from './prompts';
 
-const searchResponse = z.object({ web: z.object({ results: z.array(z.object({ url: z.string() })) }).optional() });
-
-/** One domain-only discovery request. Search snippets and model-generated URLs are never evidence. */
-export async function discoverPublicEvidence(website: string, apiKey: string, signal: AbortSignal) {
+/** Public-only native research. Neither Deck-derived summaries nor notes enter this call. */
+export async function discoverPublicEvidence(website: string, config: GatewayConfig, signal: AbortSignal) {
   signal.throwIfAborted();
   const official = validateWebsiteUrl(website);
-  const budget = AbortSignal.any([signal, AbortSignal.timeout(60_000)]);
-  const requestSignal = AbortSignal.any([budget, AbortSignal.timeout(12_000)]);
-  const endpoint = new URL('https://api.search.brave.com/res/v1/web/search');
-  // Even a submitted public URL may contain a private path or query token.
-  endpoint.searchParams.set('q', `"${official.hostname}"`);
-  endpoint.searchParams.set('count', '6');
-  const response = await fetch(endpoint, {
-    headers: { accept: 'application/json', 'X-Subscription-Token': apiKey },
-    signal: requestSignal, redirect: 'error',
+  const budget = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
+  const search = await callModel({ ...config, timeoutMs: Math.min(config.timeoutMs, 90_000), maxOutputTokens: Math.min(config.maxOutputTokens, 4000) }, {
+    system: PUBLIC_RESEARCH_PROMPT,
+    input: JSON.stringify({ publicWebsite: official.origin }),
+    webSearch: true, signal: budget,
   });
-  if (!response.ok || !response.body) {
-    void response.body?.cancel().catch(() => {});
-    throw new Error('public_search_unavailable');
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = []; let bytes = 0;
-  try {
-    while (true) {
-      requestSignal.throwIfAborted();
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > 512_000) throw new Error('public_search_response_limit');
-      chunks.push(value);
-    }
-  } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
-  const data = searchResponse.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
   const evidence: Evidence[] = [], limitations: string[] = [];
+  if (!search.searchUsed) limitations.push('public_search_not_executed: 模型未返回已完成的搜索工具记录，未将其回答作为搜索证据 / No completed search tool call; model prose is not search evidence');
+  if (!search.xSearchUsed) limitations.push('public_x_search_unconfirmed: 未确认执行 Twitter/X 定向检索，不代表项目没有相关信息 / Twitter/X-targeted search was not confirmed; not proof of absent information');
   const seen = new Set<string>();
-  for (const hit of (data.web?.results ?? []).slice(0, 6)) {
+  // Only structured citations accompanied by a completed tool call can nominate pages.
+  // The model's summary and bare prose URLs never enter the evidence ledger.
+  for (const hit of search.searchUsed ? search.citations : []) {
     signal.throwIfAborted();
-    if (seen.size >= 4 || budget.aborted) break;
+    if (seen.size >= 6 || budget.aborted) break;
     try {
       const url = validateWebsiteUrl(hit.url);
       if (seen.has(url.href)) continue;
@@ -53,9 +35,15 @@ export async function discoverPublicEvidence(website: string, apiKey: string, si
     } catch {
       signal.throwIfAborted();
       limitations.push('search_source_unreadable: 部分搜索来源未能安全读取，未作为证据 / Some search sources could not be safely retrieved and were not used as evidence');
+      if (/^https:\/\/(?:www\.)?(?:x|twitter)\.com\//i.test(hit.url)) {
+        limitations.push('twitter_source_unreadable: 搜索引用了 Twitter/X 页面，但无法读取原文；摘要未用于事实或评分 / A Twitter/X page was cited but its original text was inaccessible; summaries were not used as facts or scores');
+      }
     }
   }
   if (budget.aborted) limitations.push('public_search_time_limit: 搜索补充达到时间上限，保留已读取来源 / Discovery time limit reached; retrieved sources retained');
+  if (search.xSearchUsed && !evidence.some(e => e.url && /^https:\/\/(?:www\.)?(?:x|twitter)\.com\//i.test(e.url))) {
+    limitations.push('twitter_search_no_evidence: 已定向检索 Twitter/X，但未取得可读取的原文，不代表项目没有相关信息 / Twitter/X-targeted search executed, but no readable original was retrieved; not proof of absent information');
+  }
   if (!evidence.length) limitations.push('public_search_no_evidence: 未取得可读取的补充来源，不代表公司没有公开信息 / No readable additional sources; not proof of absent public information');
-  return { evidence, limitations: [...new Set(limitations)], searchUsed: true };
+  return { evidence, limitations: [...new Set(limitations)], searchUsed: search.searchUsed, xSearchUsed: search.xSearchUsed, usage: search.usage, elapsedMs: search.elapsedMs };
 }

@@ -51,6 +51,7 @@ it("previews masked model settings, preserves blank keys, saves versioned config
   const fetcher = mockSettings();
   render(<AdminSettings token="csrf" lang="en" />);
   await screen.findByDisplayValue("configured-model");
+  expect(screen.getByText(/no separate search key or native x_search is required/).textContent).toContain("connection test checks text only");
   expect(screen.getAllByRole("option").map(option => option.textContent)).toEqual(["OpenAI-compatible"]);
   expect(screen.queryByLabelText(/native.*search/)).toBeNull();
   expect((screen.getByLabelText(/API key/) as HTMLInputElement).value).toBe("");

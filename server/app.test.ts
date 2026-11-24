@@ -6,7 +6,7 @@ import { createApplication } from './app';
 import { fictionalDeck } from './test-fixtures';
 import * as orchestrator from './research/orchestrator';
 let app:ReturnType<typeof createApplication>,dir:string,base:string,cookie:string,csrf:string;
-beforeEach(async()=>{dir=mkdtempSync(join(tmpdir(),'screening-'));app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin:'http://localhost',searchApiKey:'search-test-only'});await new Promise<void>(r=>app.server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(app.server.address() as any).port}`;const res=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json',origin:'http://localhost'},body:JSON.stringify({username:'admin',password:'test-password-123'})});cookie=res.headers.get('set-cookie')!.split(';')[0];csrf=(await res.json()).csrfToken;});
+beforeEach(async()=>{dir=mkdtempSync(join(tmpdir(),'screening-'));app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin:'http://localhost'});await new Promise<void>(r=>app.server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(app.server.address() as any).port}`;const res=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json',origin:'http://localhost'},body:JSON.stringify({username:'admin',password:'test-password-123'})});cookie=res.headers.get('set-cookie')!.split(';')[0];csrf=(await res.json()).csrfToken;});
 afterEach(async()=>{await app.close();rmSync(dir,{recursive:true,force:true});});
 const request=(url:string,method='GET',body?:unknown,token=csrf)=>fetch(base+url,{method,headers:{cookie,origin:'http://localhost','x-csrf-token':token,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
 it.each(['http://screening.test','https://screening.test'])('supports login and logout for browser origin %s behind an HTTP backend',async(origin)=>{
@@ -181,7 +181,6 @@ it('recovers a persisted interrupted job and its original policy snapshot after 
   await app.close();app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin:'http://localhost'});
   await app.runNext();const row=app.store.db.prepare('SELECT * FROM screening_jobs WHERE id=?').get(id) as any;
   expect(row.status).toBe('completed');expect(row.attempts).toBe(2);expect(app.store.decrypt(row.snapshot).policy.prompt).toBe('');
-  expect(app.store.decrypt(app.store.decrypt(row.snapshot).searchApiKey)).toBe('search-test-only');
-  expect(row.snapshot).not.toContain('search-test-only');expect(row.result).not.toContain('search-test-only');
+  expect(app.store.decrypt(row.snapshot)).not.toHaveProperty('searchApiKey');
   expect(app.store.getConfig('policy').prompt).toBe('Changed for subsequent tasks only');
 });

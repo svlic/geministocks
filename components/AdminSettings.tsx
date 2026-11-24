@@ -302,8 +302,8 @@ export default function AdminSettings({
                 <>
                   <p className="muted">
                     {t(
-                      "OpenAI-compatible text analysis only; public web search is configured separately on the server. No X search. Blank API key preserves the stored secret. Save before testing the connection.",
-                      "模型仅支持 OpenAI-compatible 文本分析；公开网页搜索由服务端单独配置，不支持 X 搜索。API 密钥留空则保留原密钥。请先保存再测试连接。",
+                      "Text analysis uses Chat Completions. Public company, team and Twitter/X research uses the research model’s Responses web_search capability and the same API key; no separate search key or native x_search is required. Unsupported or inaccessible search is disclosed. The connection test checks text only. Blank API key preserves the stored secret; save before testing.",
+                      "文本分析使用 Chat Completions；官网、人员与 Twitter/X 公开研究使用 research 模型的 Responses web_search 能力及同一 API 密钥，无需独立搜索 Key 或原生 x_search。不支持搜索或来源不可读时会明确披露。连接测试仅验证文本调用；API 密钥留空保留原密钥，请先保存再测试。",
                     )}
                   </p>
                   <label>

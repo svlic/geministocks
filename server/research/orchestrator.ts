@@ -14,7 +14,7 @@ import { SYSTEM_BOUNDARY,TEAM_PROMPT,SECTOR_PROMPT } from './prompts';
 import { parseModelJson } from '../../utils/jsonUtils';
 import { discoverPublicEvidence } from './public-search';
 
-export interface Snapshot {models:ModelConfig[];policy:PolicyConfig;scoring:ScoringConfig;demoMode:boolean;searchApiKey?:string;pdfUnderstandingTimeoutMs?:number}
+export interface Snapshot {models:ModelConfig[];policy:PolicyConfig;scoring:ScoringConfig;demoMode:boolean;pdfUnderstandingTimeoutMs?:number}
 const entitySchema=z.object({company:companySchema.nullable(),dimensions:z.array(dimensionSchema).max(6),missingMaterials:z.array(z.string()).max(5)}).strict();
 const policyAssessmentSchema=z.object({assessment:z.object({ruleIds:z.array(z.string()),confidence:z.number().min(0).max(1),evidenceIds:z.array(z.string()),ambiguous:z.boolean()}).strict().nullable()}).strict();
 const reportSchema=z.object({summary:z.string().max(6000),sectorAndPositioning:z.array(claimSchema).max(20),productAndTechnology:z.array(claimSchema).max(20),directPrivateComps:z.array(comparableSchema).max(5),adjacentCompetitors:z.array(comparableSchema).max(5),publicCompanyRefs:z.array(comparableSchema).max(5),majorStrengths:z.array(claimSchema).max(5),majorRisks:z.array(claimSchema).max(5),missingMaterials:z.array(z.string()).max(5),dimensions:z.array(dimensionSchema).max(6)}).strict();
@@ -105,15 +105,20 @@ export async function executeScreening(store:Store,job:any,snapshot:Snapshot,pha
       demo.evidence.push(...ledger);demo.limitations.push(...limitations);Object.assign(result,demo);return finish();
     }
     const discover=async(website:string)=>{
-      if(!snapshot.searchApiKey)return;
       try{
-        const search=await discoverPublicEvidence(new URL(website).origin,store.decrypt<string>(snapshot.searchApiKey),signal);
+        signal.throwIfAborted();if(++calls>7)throw new Error('model_call_budget_exceeded');
+        const remaining=8*60_000-(Date.now()-started-understandingElapsedMs);
+        if(remaining<=0)throw new Error('analysis_time_budget_exceeded');
+        const c=model('research');metrics.provider=c.provider;metrics.modelId=c.modelId;
+        const budget=AbortSignal.any([signal,AbortSignal.timeout(remaining)]);
+        const search=await discoverPublicEvidence(new URL(website).origin,{...c,timeoutMs:Math.min(c.timeoutMs,remaining)},budget);
+        log('public-search',{elapsedMs:search.elapsedMs,usage:search.usage});
         metrics.searchUsed ||= search.searchUsed;
+        metrics.xSearchUsed ||= search.xSearchUsed;
         for(const e of search.evidence)if(!ledger.some(existing=>existing.url===e.url))ledger.push(e);
         limitations.push(...search.limitations);
       }catch(error){signal.throwIfAborted();limitations.push(`public_search_failed (${failureCode(error)}): 公开搜索未完成，继续使用已读取材料 / Public search unavailable; using retrieved material`);}
     };
-    if(!snapshot.searchApiKey)limitations.push('external_search_unavailable: 未配置公开搜索，使用已读取的官网与获准 PDF；未执行网页/X 搜索 / Public search is not configured; using retrieved website and permitted PDF only; no web/X search performed');
     if(input.website){
       try{const site=await ingestWebsite(input.website,signal);ledger.push(...site.evidence as Evidence[]);limitations.push(...site.limitations);}
       catch(error){signal.throwIfAborted();ingestionFailed=true;limitations.push(`website_read_failed (${failureCode(error)}): 官网读取失败，继续使用其他来源 / Website unavailable; other sources remain usable`);}

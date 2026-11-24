@@ -11,7 +11,7 @@ import { modelConfigsSchema,pdfUnderstandingTimeoutSchema,policySchema,scoringSc
 import { executeScreening,type Snapshot } from './research/orchestrator';
 import { callModel } from './gateway/index';
 
-interface Options {dataDir:string;secret:string;username:string;password:string;demoMode:boolean;origin:string;distDir?:string;searchApiKey?:string}
+interface Options {dataDir:string;secret:string;username:string;password:string;demoMode:boolean;origin:string;distDir?:string}
 class HttpError extends Error {constructor(readonly status:number,message:string){super(message);}}
 const bad=(message:string):never=>{throw new HttpError(400,message);};
 async function jsonBody(req:IncomingMessage){
@@ -123,7 +123,7 @@ export function createApplication(options:Options) {
         limited(`model-test:${user!.username}`,10,3600000);
         const {id}=z.object({id:z.string()}).strict().parse(await jsonBody(req));const config=store.getConfig('model-configs').models.find((m:any)=>m.id===id);
         if(!config?.apiKey)bad('Model key not configured');
-        try{const check=await callModel({...config,apiKey:store.decrypt<string>(config.apiKey)},{system:'Return a brief response.',input:'Reply with OK to confirm connectivity.'});return send(200,{ok:true,message:'OpenAI-compatible text model responded; public search is configured separately on the server',searchUsed:check.searchUsed,xSearchUsed:check.xSearchUsed,usage:check.usage});}catch(e){return send(200,{ok:false,code:(e as any).code??'provider_error',message:'Model authentication, permissions or network check failed'});}
+        try{const check=await callModel({...config,apiKey:store.decrypt<string>(config.apiKey)},{system:'Return a brief response.',input:'Reply with OK to confirm connectivity.'});return send(200,{ok:true,message:'Text connectivity confirmed only; Responses web search is checked during screening, not by this test',searchUsed:check.searchUsed,xSearchUsed:check.xSearchUsed,usage:check.usage});}catch(e){return send(200,{ok:false,code:(e as any).code??'provider_error',message:'Model authentication, permissions or network check failed'});}
       }
       if(path==='/api/uploads/init'&&req.method==='POST'){
         limited(`upload:${user!.username}`,30,3600000);
@@ -161,7 +161,7 @@ export function createApplication(options:Options) {
         if((store.db.prepare("SELECT count(*) AS n FROM screening_jobs WHERE owner=? AND status IN ('queued','running')").get(user!.username) as any).n>=4)throw new HttpError(429,'Too many pending jobs');
         if(input.uploadId){const upload=store.db.prepare('SELECT * FROM uploads WHERE id=? AND owner=? AND ready=1 AND expires>?').get(input.uploadId,user!.username,Date.now());if(!upload)bad('PDF not uploaded or already assigned');}
         const models=store.getConfig('model-configs');
-        const id=randomUUID(),snapshot:Snapshot={models:models.models,pdfUnderstandingTimeoutMs:pdfUnderstandingTimeoutSchema.parse(models.pdfUnderstandingTimeoutMs),policy:store.getConfig('policy'),scoring:store.getConfig('scoring'),demoMode:options.demoMode,...(options.searchApiKey?{searchApiKey:store.encrypt(options.searchApiKey)}:{})};
+        const id=randomUUID(),snapshot:Snapshot={models:models.models,pdfUnderstandingTimeoutMs:pdfUnderstandingTimeoutSchema.parse(models.pdfUnderstandingTimeoutMs),policy:store.getConfig('policy'),scoring:store.getConfig('scoring'),demoMode:options.demoMode};
         store.db.exec('BEGIN IMMEDIATE');try{store.db.prepare('INSERT INTO screening_jobs(id,owner,status,phase,input,snapshot,expires) VALUES (?,?,?,?,?,?,?)').run(id,user!.username,'queued','reading',JSON.stringify(input),store.encrypt(snapshot),Date.now()+86400000);if(input.uploadId)store.db.prepare('UPDATE uploads SET ready=2 WHERE id=?').run(input.uploadId);store.db.exec('COMMIT');}catch(e){store.db.exec('ROLLBACK');throw e;}
         return send(202,{id,status:'queued',phase:'reading'});
       }

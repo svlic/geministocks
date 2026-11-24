@@ -17,7 +17,7 @@ beforeEach(()=>{
   snapshot={demoMode:false,scoring:defaultScoring,policy:{version:'1',prompt:'',rules:[]},models:[{id:'m',provider:'openai',modelId:'configured-test-model',roles:['research','team','synthesis'],enabled:true,apiKey:store.encrypt('private-test-key'),timeoutMs:10000,maxOutputTokens:8000,allowConfidential:true}]};
   store.db.prepare('INSERT INTO screening_jobs(id,owner,status,phase,input,snapshot,expires) VALUES (?,?,?,?,?,?,?)').run('job','admin','running','reading','{}',store.encrypt(snapshot),Date.now()+86400000);
   mocks.website.mockResolvedValue({evidence:fixture.evidence,limitations:[]});
-  mocks.search.mockResolvedValue({evidence:[],limitations:[],searchUsed:true});
+  mocks.search.mockResolvedValue({evidence:[],limitations:['public_search_not_executed'],searchUsed:false,xSearchUsed:false,elapsedMs:5,usage:{input_tokens:1}});
   mocks.pdf.mockResolvedValue({evidence:[{...fixture.evidence[0],id:'private',type:'uploaded_deck',url:null,documentId:'deck',page:1,quoteOrSummary:'SECRET-DECK-CONTENT'}],limitations:[]});
   mocks.call.mockImplementation(async(_config,request)=>{
     let value:unknown;
@@ -30,13 +30,13 @@ beforeEach(()=>{
 });
 afterEach(()=>{store.close();rmSync(dir,{recursive:true,force:true});});
 const run=(input:unknown={website:'https://public.example.org'})=>executeScreening(store,{id:'job',input:JSON.stringify(input)},snapshot,()=>{},new AbortController().signal);
-it('runs independent team analysis on supplied evidence and discloses the absence of external search',async()=>{
+it('runs independent team analysis on supplied evidence when native search did not execute',async()=>{
   writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');
   const result=await run({website:'https://public.example.org',uploadId:'deck',note:'PRIVATE-NOTE'});
   expect(result.mode).toBe('standard');expect(result.dimensions[0].weightPercent).toBe(30);
   // The team's 4,3,3,4,null gives 105/30 = 3.5, not a synthesis replacement.
   expect(result.dimensions[0].score0to5).toBe(3.5);expect(result.execution).toMatchObject({provider:'openai',searchUsed:false,xSearchUsed:false});
-  expect(result.limitations.join(' ')).toContain('external_search_unavailable');
+  expect(result.limitations.join(' ')).toContain('public_search_not_executed');
   expect(result.evidence.map(e=>e.id)).toEqual(['private',...fixture.evidence.map(e=>e.id)]);
 });
 it('scores a vague but attributable deck-only team without external corroboration or preliminary scores',async()=>{
@@ -181,6 +181,8 @@ it.each([true,false])('PDF-only website evidence requires a publicly confirmed c
   expect(result.execution.searchUsed).toBe(false);
   expect(result.evidence.some(e=>e.id==='public-site')).toBe(confirmed);
   expect(mocks.website.mock.calls[0][0]).toBe(website);
+  expect(mocks.search).toHaveBeenCalledTimes(confirmed?1:0);
+  expect(JSON.stringify(mocks.search.mock.calls)).not.toMatch(/PRIVATE-URL-TOKEN|SECRET-DECK-CONTENT|Fictional founder/);
   if(!confirmed)expect(result.limitations.join(' ')).toContain('identity_unconfirmed');
 });
 
@@ -232,6 +234,7 @@ it('does not let synthesis manufacture a team score when independent analysis fa
 
 it('returns validated results before the hard job deadline instead of losing them to worker timeout',async()=>{
   const previous=mocks.call.getMockImplementation()!;const clock=vi.spyOn(Date,'now');const start=Date.now();
+  clock.mockReturnValue(start);
   try{
     mocks.call.mockImplementation(async(config,request)=>{const response=await previous(config,request);if(request.system.includes('Extract company identity'))clock.mockReturnValue(start+8*60_000);return response;});
     const result=await run();expect(result.mode).toBe('partial_error');expect(result.company!.name).toBe(fixture.company!.name);
@@ -307,20 +310,23 @@ it('does not lose identity and dimensions if optional public identity enrichment
 });
 
 it('searches on only the public hostname before giving up on an empty website',async()=>{
-  snapshot.searchApiKey=store.encrypt('search-private-key');mocks.website.mockResolvedValue({evidence:[],limitations:[]});
-  mocks.search.mockResolvedValue({evidence:fixture.evidence,limitations:[],searchUsed:true});
-  const result=await run({website:'https://public.example.org/private-path?token=PRIVATE-TOKEN',note:'PRIVATE-NOTE'});
-  expect(mocks.search).toHaveBeenCalledWith('https://public.example.org','search-private-key',expect.any(AbortSignal));
-  expect(result.mode).toBe('standard');expect(result.execution.searchUsed).toBe(true);
+  writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');
+  mocks.website.mockResolvedValue({evidence:[],limitations:[]});
+  mocks.search.mockResolvedValue({evidence:fixture.evidence,limitations:[],searchUsed:true,xSearchUsed:true,elapsedMs:10,usage:{input_tokens:5}});
+  const result=await run({website:'https://public.example.org/private-path?token=PRIVATE-TOKEN',uploadId:'deck',note:'PRIVATE-NOTE'});
+  expect(mocks.search).toHaveBeenCalledWith('https://public.example.org',expect.objectContaining({apiKey:'private-test-key',modelId:'configured-test-model'}),expect.any(AbortSignal));
+  expect(JSON.stringify(mocks.search.mock.calls)).not.toMatch(/PRIVATE-TOKEN|PRIVATE-NOTE|SECRET-DECK/);
+  expect(result.mode).toBe('standard');expect(result.execution).toMatchObject({searchUsed:true,xSearchUsed:true});
+  expect(JSON.parse((store.db.prepare("SELECT metadata FROM job_usage WHERE job_id=? AND module=?").get('job','public-search') as any).metadata)).toMatchObject({usage:{input_tokens:5}});
 });
 
 it('continues with existing evidence when public search fails',async()=>{
-  snapshot.searchApiKey=store.encrypt('search-private-key');mocks.search.mockRejectedValue(new Error('upstream-private-data'));
+  mocks.search.mockRejectedValue(new Error('upstream-private-data'));
   const result=await run();expect(result.mode).toBe('standard');expect(result.limitations.join(' ')).toContain('public_search_failed');expect(JSON.stringify(result)).not.toContain('upstream-private-data');
 });
 
 it('never searches using unconfirmed PDF-only identity, notes or private URLs',async()=>{
-  snapshot.searchApiKey=store.encrypt('search-private-key');fixture.company!.website='https://public.example.org/private?token=PRIVATE-TOKEN';
+  fixture.company!.website='https://public.example.org/private?token=PRIVATE-TOKEN';
   writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');
   mocks.pdf.mockResolvedValue({evidence:fixture.evidence.map(e=>({...e,type:'uploaded_deck',url:null,documentId:'deck',page:1,quoteOrSummary:e.quoteOrSummary+' '+fixture.company!.website})),limitations:[]});
   mocks.website.mockResolvedValue({evidence:[],limitations:[]});

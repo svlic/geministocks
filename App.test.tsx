@@ -167,6 +167,7 @@ it.each(["zh", "en"] as const)("separates priority from quality and permits an e
   report.policyBonus = 5;
   report.policyMatch = { ...report.policyMatch!, status: "focus", matchedRuleIds: ["focus"], evidenceIds: ["e1"] };
   const view = render(<ScreeningResultView result={report} lang={lang} />);
+  expect(screen.getByText(lang === "zh" ? "实际定向检索 Twitter/X（含网页搜索）" : "Twitter/X targeted search used (including web search)")).toBeTruthy();
   expect(screen.getByText("73 / 100")).toBeTruthy();
   expect(screen.getByText("78 / 100")).toBeTruthy();
   expect(screen.getByText(lang === "zh" ? "质量分 73 + 策略加分 5，封顶 100" : "Quality 73 + policy bonus 5, capped at 100")).toBeTruthy();

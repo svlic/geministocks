@@ -106,7 +106,7 @@ const labels: Record<string, [string, string]> = {
   provider: ["Provider", "供应商"],
   modelId: ["Model ID", "模型 ID"],
   searchUsed: ["Web search used", "实际使用网页搜索"],
-  xSearchUsed: ["X search used", "实际使用 X 搜索"],
+  xSearchUsed: ["Twitter/X targeted search used (including web search)", "实际定向检索 Twitter/X（含网页搜索）"],
   elapsedMs: ["Elapsed (ms)", "耗时（毫秒）"],
   approximateCost: ["Approximate cost", "估算费用"],
   focus: ["Focus", "重点关注"],
