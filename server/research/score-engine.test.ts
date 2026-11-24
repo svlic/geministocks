@@ -1,7 +1,18 @@
 import { describe,it,expect } from 'vitest';
-import { calculateScores, teamScore } from './score-engine';
-import { defaultScoring, dimensionIds, scoringSchema, type DimensionScore } from '../../shared/screening-schema';
+import { calculateScores, calculatePriorityScore, teamScore } from './score-engine';
+import { defaultScoring, dimensionIds, scoringSchema, type DimensionScore, type PolicyMatch } from '../../shared/screening-schema';
 const dims = (scores:(number|null)[]):DimensionScore[] => dimensionIds.map((id,i)=>({id,score0to5:scores[i],weightPercent:999,rationale:'Fact',evidenceIds:['e1'],evidenceState:scores[i]===null?'insufficient':'sufficient'}));
+it('adds a single bounded research-priority bonus without manufacturing a missing quality score',()=>{
+  const focus:PolicyMatch={status:'focus',matchedRuleIds:['a','b'],policyVersion:'1',confidence:.95,explanation:'Supported focus',evidenceIds:['e1']};
+  expect(calculatePriorityScore(73,focus)).toEqual({policyBonus:5,priorityScore:78});
+  expect(calculatePriorityScore(98,focus)).toEqual({policyBonus:5,priorityScore:100});
+  expect(calculatePriorityScore(0,focus)).toEqual({policyBonus:5,priorityScore:5});
+  expect(calculatePriorityScore(null,focus)).toEqual({policyBonus:0,priorityScore:null});
+  expect(calculatePriorityScore(73,null)).toEqual({policyBonus:0,priorityScore:null});
+  for(const status of ['low_priority','unknown'] as const)
+    expect(calculatePriorityScore(73,{...focus,status})).toEqual({policyBonus:0,priorityScore:73});
+  expect(calculatePriorityScore(73,{...focus,status:'hard_exclude'})).toEqual({policyBonus:0,priorityScore:null});
+});
 describe('evidence weighted quality scoring',()=>{
   it('normalizes available dimensions without turning missing dimensions into zero',()=>{
     const r=calculateScores(dims([4,null,3,null,null,null]),'seed',defaultScoring);

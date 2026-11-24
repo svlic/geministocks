@@ -160,6 +160,28 @@ it("exports brief and standard conclusions with PDF citations, metadata and limi
   }
 });
 
+it.each(["zh", "en"] as const)("separates priority from quality and permits an empty policy in %s", (lang) => {
+  const report = result();
+  report.totalScore = 73;
+  report.priorityScore = 78;
+  report.policyBonus = 5;
+  report.policyMatch = { ...report.policyMatch!, status: "focus", matchedRuleIds: ["focus"], evidenceIds: ["e1"] };
+  const view = render(<ScreeningResultView result={report} lang={lang} />);
+  expect(screen.getByText("73 / 100")).toBeTruthy();
+  expect(screen.getByText("78 / 100")).toBeTruthy();
+  expect(screen.getByText(lang === "zh" ? "质量分 73 + 策略加分 5，封顶 100" : "Quality 73 + policy bonus 5, capped at 100")).toBeTruthy();
+  expect(screeningMarkdown(report)).toContain("**priorityScore:** 78");
+  report.policyMatch = null;
+  report.priorityScore = null;
+  report.policyBonus = 0;
+  view.rerender(<ScreeningResultView result={report} lang={lang} />);
+  expect(screen.getByText("73 / 100")).toBeTruthy();
+  expect(screen.queryByText(lang === "zh" ? "研究优先分" : "Research priority score")).toBeNull();
+  expect(screen.queryByRole("heading", { name: lang === "zh" ? "策略匹配" : "Policy match" })).toBeNull();
+  expect(screen.queryByText(lang === "zh" ? "独立策略状态" : "Independent policy status")).toBeNull();
+  expect(screeningMarkdown(report)).not.toContain("policyVersion");
+});
+
 it("renders claims with verification, evidence anchors and safe source links; exports nested report data", () => {
   const report = result();
   report.evidence.push({

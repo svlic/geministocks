@@ -490,6 +490,12 @@ export default function AdminSettings({
               )}
               {tab === "policy" && (
                 <>
+                  <p className="muted">
+                    {t(
+                      "Optional: leave rules empty or disable all rules to skip policy matching. Focus (including a winning exception) adds 5 non-stacking research-priority points, capped at 100, only when a quality score exists. Quality scores and evidence coverage remain independent.",
+                      "策略可选：规则留空或全部停用即可跳过匹配。重点关注（含优先命中的例外）仅在已有质量分时，为研究优先分加 5 分，不叠加、封顶 100；质量评分与证据覆盖保持独立。",
+                    )}
+                  </p>
                   <label>
                     {t(
                       "Investment preference prompt · max 12,000 characters",

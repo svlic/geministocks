@@ -342,19 +342,39 @@ export default function ScreeningResultView({
             </span>
           )}
         </div>
+        {r.priorityScore != null && (
+          <div>
+            <small>{lang === "zh" ? "研究优先分" : "Research priority score"}</small>
+            <strong>{r.priorityScore} / 100</strong>
+            <span>
+              {lang === "zh"
+                ? `质量分 ${r.totalScore} + 策略加分 ${r.policyBonus ?? 0}，封顶 100`
+                : `Quality ${r.totalScore} + policy bonus ${r.policyBonus ?? 0}, capped at 100`}
+            </span>
+          </div>
+        )}
         <div>
           <small>
             {lang === "zh" ? "加权证据覆盖" : "Weighted evidence coverage"}
           </small>
           <strong>{Math.round(r.evidenceCoverage * 100)}%</strong>
         </div>
-        <div>
+        {r.policyMatch && <div>
           <small>
             {lang === "zh" ? "独立策略状态" : "Independent policy status"}
           </small>
           <strong>{label(r.policyMatch.status, lang)}</strong>
-        </div>
+        </div>}
       </div>
+      <p className="muted">
+        {r.policyMatch === null
+          ? lang === "zh"
+            ? "策略匹配为空，不影响独立质量评估。"
+            : "Policy match is empty; independent quality assessment is unaffected."
+          : lang === "zh"
+            ? "重点关注仅为研究优先分加 5 分，不叠加；不改变六维评分或证据覆盖，无质量分时不生成优先分。非投资建议。"
+            : "Focus adds 5 non-stacking points to research priority only. Dimension scores and coverage stay unchanged; no quality score means no priority score. Not investment advice."}
+      </p>
       {sections.map((key) => {
         const v = r[key];
         if ((v === null || (Array.isArray(v) && !v.length)) &&

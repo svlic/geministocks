@@ -21,7 +21,8 @@ beforeEach(()=>{
   mocks.pdf.mockResolvedValue({evidence:[{...fixture.evidence[0],id:'private',type:'uploaded_deck',url:null,documentId:'deck',page:1,quoteOrSummary:'SECRET-DECK-CONTENT'}],limitations:[]});
   mocks.call.mockImplementation(async(_config,request)=>{
     let value:unknown;
-    if(request.system.includes('Extract company identity'))value={company:fixture.company,dimensions:fixture.dimensions,missingMaterials:fixture.missingMaterials,policyAssessment:{ruleIds:[],confidence:0,evidenceIds:[],ambiguous:true}};
+    if(request.system.includes('Extract company identity'))value={company:fixture.company,dimensions:fixture.dimensions,missingMaterials:fixture.missingMaterials};
+    else if(request.system.includes('Assess investment policy'))value={assessment:null};
     else if(request.system.includes('Independently screen only'))value=fixture.team;
     else value={summary:fixture.summary,dimensions:fixture.dimensions,sectorAndPositioning:fixture.sectorAndPositioning,productAndTechnology:fixture.productAndTechnology,directPrivateComps:[],adjacentCompetitors:[],publicCompanyRefs:[],majorStrengths:fixture.majorStrengths,majorRisks:fixture.majorRisks,missingMaterials:fixture.missingMaterials};
     return {text:JSON.stringify(value),citations:[],usage:{input_tokens:1},searchUsed:false,xSearchUsed:false,elapsedMs:5};
@@ -116,14 +117,50 @@ it('uses server policy and stops before full research on a precise hard exclusio
   const previous=mocks.call.getMockImplementation()!;
   mocks.call.mockImplementation(async(config,request)=>{
     const response=await previous(config,request);
-    if(request.system.includes('Extract company identity')){
-      const entity=JSON.parse(response.text);entity.policyAssessment={ruleIds:['exclude'],confidence:.99,evidenceIds:['demo-web'],ambiguous:false};response.text=JSON.stringify(entity);
-    }
+    if(request.system.includes('Assess investment policy'))response.text=JSON.stringify({assessment:{ruleIds:['exclude'],confidence:.99,evidenceIds:['demo-web'],ambiguous:false}});
     return response;
   });
   const result=await run();
-  expect(result.mode).toBe('brief_policy');expect(result.policyMatch.policyVersion).toBe('private-policy');
+  expect(result.mode).toBe('brief_policy');expect(result.policyMatch!.policyVersion).toBe('private-policy');
   expect(result.team).toBeNull();expect(result.dimensions).toEqual([]);expect(result.directPrivateComps).toEqual([]);expect(result.totalScore).toBeNull();
+});
+it('keeps quality analysis blind to policy while adding focus research-priority points',async()=>{
+  const baseline=await run();
+  snapshot.policy={version:'focus-policy',prompt:'POLICY-ONLY',rules:[{id:'focus',name:'重点方向',kind:'focus',sectorTags:[],definition:'Developer workflow',conditions:'',enabled:true,priority:1,notes:''}]};
+  const previous=mocks.call.getMockImplementation()!;
+  mocks.call.mockImplementation(async(config,request)=>{
+    const response=await previous(config,request);
+    if(request.system.includes('Assess investment policy'))response.text=JSON.stringify({assessment:{ruleIds:['focus'],confidence:.98,evidenceIds:['demo-web'],ambiguous:false}});
+    // Simulate preference-biased quality output if policy leaks into a quality call.
+    else if(request.input.includes('POLICY-ONLY')||JSON.parse(request.input).untrustedData.policyMatch){
+      const value=JSON.parse(response.text);
+      if(value.dimensions)value.dimensions=value.dimensions.map((d:any)=>({...d,score0to5:0}));
+      response.text=JSON.stringify(value);
+    }
+    return response;
+  });
+  const focused=await run();
+  expect(baseline).toMatchObject({mode:'standard',policyMatch:null,policyBonus:0,priorityScore:null,totalScore:68});
+  expect(focused).toMatchObject({mode:'standard',policyMatch:{status:'focus'},policyBonus:5,priorityScore:73,totalScore:68});
+  expect(focused.dimensions).toEqual(baseline.dimensions);expect(focused.evidenceCoverage).toBe(baseline.evidenceCoverage);
+  snapshot.scoring={...defaultScoring,coverageThreshold:1};
+  expect(await run()).toMatchObject({mode:'brief_insufficient',policyMatch:{status:'focus'},totalScore:null,policyBonus:0,priorityScore:null});
+});
+it.each(['disabled','null','unmatched','failure','invalid-evidence'] as const)('permits optional policy assessment: %s',async scenario=>{
+  snapshot.policy={version:'optional',prompt:'',rules:[{id:'optional',name:'可选方向',kind:'focus',sectorTags:[],definition:'Developer workflow',conditions:'',enabled:scenario!=='disabled',priority:1,notes:''}]};
+  const previous=mocks.call.getMockImplementation()!;
+  mocks.call.mockImplementation(async(config,request)=>{
+    if(request.system.includes('Assess investment policy')){
+      if(scenario==='failure'||scenario==='disabled')throw new Error('policy unavailable');
+      return {text:JSON.stringify({assessment:scenario==='null'?null:{ruleIds:scenario==='unmatched'?[]:['optional'],confidence:.99,evidenceIds:[scenario==='invalid-evidence'?'invented':'demo-web'],ambiguous:false}}),elapsedMs:1};
+    }
+    return previous(config,request);
+  });
+  const result=await run();
+  expect(result).toMatchObject({mode:'standard',totalScore:68,policyBonus:0,priorityScore:scenario==='unmatched'?68:null});
+  if(scenario==='unmatched')expect(result.policyMatch?.status).toBe('unknown');
+  else expect(result.policyMatch).toBeNull();
+  expect(result.limitations.some(l=>l.startsWith('policy_module_failed'))).toBe(scenario==='failure'||scenario==='invalid-evidence');
 });
 it('accepts conservative partial team scores but still rejects missing or unbound professional evidence',async()=>{
   delete fixture.team!.subScoreEvidence!.founderMarketFit;

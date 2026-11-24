@@ -1,4 +1,11 @@
-import { dimensionIds, dimensionSchema, scoringSchema, teamKeys, type Stage, type ScoringConfig, type DimensionScore, type TeamScreening } from '../../shared/screening-schema';
+import { dimensionIds, dimensionSchema, scoringSchema, teamKeys, type Stage, type ScoringConfig, type DimensionScore, type TeamScreening, type PolicyMatch } from '../../shared/screening-schema';
+
+/** Policy affects research priority only, never dimension scores or evidence coverage. */
+export function calculatePriorityScore(totalScore:number|null,policy:PolicyMatch|null) {
+  if(totalScore===null||policy===null||policy.status==='hard_exclude')return {policyBonus:0,priorityScore:null};
+  const policyBonus=policy.status==='focus'&&policy.evidenceIds.length>0?5:0;
+  return {policyBonus,priorityScore:Math.min(100,totalScore+policyBonus)};
+}
 
 export function teamScore(scores:TeamScreening['subScores']):number|null {
   const weights=[10,8,7,5,5]; let total=0,covered=0;

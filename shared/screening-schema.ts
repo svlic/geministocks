@@ -39,8 +39,10 @@ export const comparableSchema = z.object({
 }).strict();
 export const policyMatchSchema = z.object({status: z.enum(['focus', 'low_priority', 'hard_exclude', 'unknown']), matchedRuleIds: ids, policyVersion: text, confidence: z.number().min(0).max(1), explanation: text, evidenceIds: ids}).strict();
 export const screeningResultSchema = z.object({
-  schemaVersion: z.literal('1.0'), jobId: text, mode: z.enum(['standard', 'brief_insufficient', 'brief_policy', 'partial_error', 'failed']), generatedAt: z.string().datetime(), company: companySchema.nullable(), policyMatch: policyMatchSchema,
+  schemaVersion: z.literal('1.0'), jobId: text, mode: z.enum(['standard', 'brief_insufficient', 'brief_policy', 'partial_error', 'failed']), generatedAt: z.string().datetime(), company: companySchema.nullable(), policyMatch: policyMatchSchema.nullable(),
   summary: text, team: teamSchema.nullable(), dimensions: z.array(dimensionSchema).max(6), evidenceCoverage: z.number().min(0).max(1), totalScore: z.number().min(0).max(100).nullable(),
+  // Optional only for reports created before research prioritization was introduced.
+  policyBonus: z.number().min(0).max(5).optional(), priorityScore: z.number().min(0).max(100).nullable().optional(),
   sectorAndPositioning: z.array(claimSchema).max(20), productAndTechnology: z.array(claimSchema).max(20), directPrivateComps: z.array(comparableSchema).max(5), adjacentCompetitors: z.array(comparableSchema).max(5), publicCompanyRefs: z.array(comparableSchema).max(5),
   majorStrengths: z.array(claimSchema).max(10), majorRisks: z.array(claimSchema).max(10), missingMaterials: strings, evidence: z.array(evidenceSchema).max(100), limitations: strings,
   execution: z.object({provider: text, modelId: text, searchUsed: z.boolean(), xSearchUsed: z.boolean(), elapsedMs: z.number().nonnegative(), approximateCost: z.number().nullable().optional()}).strict(),

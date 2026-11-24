@@ -36,7 +36,7 @@ export function validateEvidence(result:ScreeningResult):ScreeningResult {
   [...r.sectorAndPositioning,...r.productAndTechnology,...r.majorStrengths,...r.majorRisks,...(r.team?.strengths??[]),...(r.team?.weaknessesOrRisks??[]),...(r.team?.founders.flatMap(f=>f.professionalFacts)??[])].forEach(claim);
   Object.values(r.team?.subScoreEvidence??{}).forEach(assessment=>{if(assessment)refs(assessment.evidenceIds);});
   r.dimensions.forEach(d=>{refs(d.evidenceIds);if(!d.evidenceIds.length){d.score0to5=null;d.evidenceState='insufficient';}});
-  refs(r.policyMatch.evidenceIds);
+  if(r.policyMatch)refs(r.policyMatch.evidenceIds);
   const comps=(items:ComparableCompany[],category:ComparableCompany['category'])=>items.forEach(c=>{
     if(c.category!==category)throw new Error('Mixed comparable categories');
     refs(c.evidenceIds);

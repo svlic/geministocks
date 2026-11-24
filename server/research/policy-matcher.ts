@@ -1,6 +1,7 @@
 import type { PolicyConfig,PolicyMatch } from '../../shared/screening-schema';
 export interface PolicyAssessment {ruleIds:string[];confidence:number;evidenceIds:string[];ambiguous:boolean}
-export function matchPolicy(policy:PolicyConfig,assessment:PolicyAssessment,threshold:number):PolicyMatch {
+export function matchPolicy(policy:PolicyConfig,assessment:PolicyAssessment|null,threshold:number):PolicyMatch|null {
+  if(!policy.rules.some(r=>r.enabled)||assessment===null)return null;
   const base:PolicyMatch={status:'unknown',matchedRuleIds:[],policyVersion:policy.version,confidence:assessment.confidence,explanation:'No unambiguous evidence-backed rule match / 无明确、有证据支持的规则匹配',evidenceIds:assessment.evidenceIds};
   if(assessment.ambiguous||!assessment.evidenceIds.length)return base;
   const rules=policy.rules.filter(r=>r.enabled&&assessment.ruleIds.includes(r.id)).sort((a,b)=>b.priority-a.priority);
