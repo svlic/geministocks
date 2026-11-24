@@ -240,8 +240,6 @@ function Value({
         {lang === "zh" ? "页" : ""}
       </strong>
     );
-  if (field === "stage" && value === "unknown")
-    return <span className="badge">{lang === "zh" ? "未知 · 阶段暂定" : "Unknown · provisional stage"}</span>;
   return (
     <span>
       {typeof value === "boolean"

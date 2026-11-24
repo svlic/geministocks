@@ -2,7 +2,6 @@ export interface ModelConfig {
   provider: 'openai'; modelId: string; apiKey: string; baseUrl?: string;
   timeoutMs: number; maxOutputTokens: number; allowConfidential: boolean;
 }
-export type GatewayConfig = ModelConfig;
 export interface ModelRequest { system: string; input: string; signal?: AbortSignal; webSearch?: boolean }
 export interface ModelResult {
   text: string; citations: Array<{ url: string; title: string }>; usage: unknown;

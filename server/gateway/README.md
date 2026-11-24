@@ -1,7 +1,6 @@
 # Model gateway
 
-`index.ts` exports `callModel(config: GatewayConfig, request: ModelRequest)`;
-`ModelConfig` is an equivalent alias. The result is
+`index.ts` exports `callModel(config: ModelConfig, request: ModelRequest)`. The result is
 `{text, citations: Array<{url,title}>, usage, searchUsed, xSearchUsed, elapsedMs}`.
 `GatewayError` exposes sanitized `code`, `retryable`, and optional HTTP `status`.
 It never includes upstream bodies, keys, or prompts. No logging is performed.

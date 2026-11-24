@@ -1,11 +1,11 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import type { GatewayConfig } from '../gateway/index';
+import type { ModelConfig } from '../gateway/index';
 const page = vi.hoisted(() => vi.fn());
 vi.mock('../ingestion/website', async importOriginal => ({ ...await importOriginal<typeof import('../ingestion/website')>(), fetchPublicPage: page }));
 import { discoverPublicEvidence } from './public-search';
 afterEach(() => { vi.unstubAllGlobals(); vi.resetAllMocks(); });
 const signal = () => new AbortController().signal;
-const config: GatewayConfig = { provider: 'openai', baseUrl: 'https://relay.example/v1', modelId: 'research-model', apiKey: 'private-key', timeoutMs: 1000, maxOutputTokens: 3000, allowConfidential: false };
+const config: ModelConfig = { provider: 'openai', baseUrl: 'https://relay.example/v1', modelId: 'research-model', apiKey: 'private-key', timeoutMs: 1000, maxOutputTokens: 3000, allowConfidential: false };
 function response(urls: string[], searches: unknown[] = [{ type: 'web_search_call', status: 'completed', action: { query: 'site:x.com example.org founders' } }]) {
   return Response.json({ status: 'completed', output: [...searches, {
     type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'UNVERIFIED-MODEL-SUMMARY: invented financing $100M https://invented.example',

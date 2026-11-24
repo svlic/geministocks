@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { fetchPublicPage, validateWebsiteUrl } from '../ingestion/website';
-import { callModel, type GatewayConfig } from '../gateway/index';
+import { callModel, type ModelConfig } from '../gateway/index';
 import type { Evidence } from '../../shared/screening-schema';
 import { PUBLIC_RESEARCH_PROMPT } from './prompts';
 
 /** Public-only native research. Neither Deck-derived summaries nor notes enter this call. */
-export async function discoverPublicEvidence(website: string, config: GatewayConfig, signal: AbortSignal) {
+export async function discoverPublicEvidence(website: string, config: ModelConfig, signal: AbortSignal) {
   signal.throwIfAborted();
   const official = validateWebsiteUrl(website);
   const budget = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);

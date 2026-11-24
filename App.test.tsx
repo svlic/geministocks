@@ -274,6 +274,22 @@ it("renders claims with verification, evidence anchors and safe source links; ex
       .getAttribute("rel"),
   ).toContain("noopener");
   expect(screen.getByText(/PDF · page 3/)).toBeTruthy();
+  report.company = {
+    name: "Fixture Co",
+    website: "https://fixture.example",
+    aliases: [],
+    productSummary: "Fixture product",
+    targetCustomers: [],
+    sectorPath: [],
+    stage: "unknown",
+    stageConfidence: null,
+    identityConfidence: 0.9,
+  };
+  const { unmount } = render(<ScreeningResultView result={report} lang="zh" />);
+  const stage = screen.getByText("融资阶段").nextElementSibling;
+  expect(stage?.querySelector(".badge")?.textContent).toBe("未知");
+  expect(screen.queryByText("未知 · 阶段暂定")).toBeNull();
+  unmount();
   const markdown = screeningMarkdown(report);
   for (const value of [
     "Public professional contribution",

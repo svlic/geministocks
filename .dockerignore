@@ -15,10 +15,6 @@
 !icon-*.svg
 !components/
 !components/**
-!hooks/
-!hooks/**
-!locales/
-!locales/**
 !public/
 !public/**
 !services/
