@@ -71,12 +71,12 @@ export function parseModelJson(content: unknown): any {
     const text = stripReasoning(typeof content === 'string' ? content :
         Array.isArray(content) ? content.filter(part => part?.type === 'text' && typeof part.text === 'string').map(part => part.text).join('\n') : '');
     if (!text) throw new Error('Empty model answer');
-    const fenced = Array.from(text.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi), match => match[1].trim());
-    const candidates = [...fenced, text];
+    const candidates = new Set(Array.from(text.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi), match => match[1].trim()));
+    candidates.add(text);
     // Commentary such as [analysis] must not mask a valid object later in the answer.
     const objectStart = text.indexOf('{');
-    if (objectStart !== -1) candidates.push(extractJson(text.slice(objectStart)));
-    candidates.push(extractJson(text));
+    if (objectStart !== -1) candidates.add(extractJson(text.slice(objectStart)));
+    candidates.add(extractJson(text));
     for (const candidate of candidates) {
         try {
             const value = JSON.parse(candidate);

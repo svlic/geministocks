@@ -65,6 +65,14 @@ describe('structured model answers', () => {
   it('rejects prose instead of treating it as a report', () => {
     expect(() => parseModelJson('Sorry, I cannot produce a report.')).toThrow();
   });
+  it('prefers any exact answer over repairing an earlier fenced candidate', () => {
+    expect(parseModelJson('```json\n[1,]\n```\n{"final":7}')).toEqual({ final: 7 });
+    expect(parseModelJson('```json\n[1,]\n```\n```json\n{"final":7}\n```')).toEqual({ final: 7 });
+  });
+  it('preserves whole arrays and fence priority over extracted inner objects', () => {
+    expect(parseModelJson('[{"score":3},7]')).toEqual([{ score: 3 }, 7]);
+    expect(parseModelJson('```json\n[3,7]\n```\n{"other":9}')).toEqual([3, 7]);
+  });
   it('extracts a prose-prefixed array and repairs incomplete structured answers', () => {
     expect(parseModelJson('Results: [3, 7] trailing prose')).toEqual([3, 7]);
     expect(parseModelJson('{"summary":"fixture", "values":[7,2')).toEqual({ summary: 'fixture', values: [7, 2] });
