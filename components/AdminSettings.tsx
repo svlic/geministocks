@@ -377,7 +377,8 @@ export default function AdminSettings({
                               {label(key, lang)}
                               <input
                                 type="number"
-                                min={1}
+                                min={key === "timeoutMs" ? 1000 : 1}
+                                max={key === "timeoutMs" ? 600000 : undefined}
                                 required
                                 value={m[key]}
                                 onChange={(e) =>
@@ -388,6 +389,12 @@ export default function AdminSettings({
                           ),
                         )}
                       </div>
+                      <p className="muted">
+                        {t(
+                          "Model timeout: 1,000–600,000 ms (1–600 seconds); for example, 300000 = 5 minutes. Actual calls are capped by the remaining 8-minute analysis budget. Public search keeps its separate shorter limits. New jobs only.",
+                          "模型超时可设为 1,000～600,000 毫秒（1～600 秒），例如 300000 = 5 分钟。实际调用仍受整轮 8 分钟分析预算的剩余时间限制，公开搜索保留独立的较短时限；仅对新任务生效。",
+                        )}
+                      </p>
                       <div className="checks">
                         {(["research", "team", "synthesis"] as const).map(
                           (role) => (

@@ -48,9 +48,12 @@ it('rejects anonymous API access, missing CSRF and prompt overrides',async()=>{
   expect((await request('/api/screen/jobs','POST',{website:'http://127.0.0.1'})).status).toBe(400);
 });
 it('encrypts stored keys, masks reads and persists configuration',async()=>{
-  const model={id:'test',provider:'openai',modelId:'operator-model-id',roles:['research'],enabled:true,timeoutMs:10000,maxOutputTokens:1000,allowConfidential:false,apiKey:'secret-for-test-only'};
+  const model={id:'test',provider:'openai',modelId:'operator-model-id',roles:['research'],enabled:true,timeoutMs:600000,maxOutputTokens:1000,allowConfidential:false,apiKey:'secret-for-test-only'};
   expect((await request('/api/admin/model-configs','PUT',{version:'1',models:[model]})).status).toBe(200);
   const response=await (await request('/api/admin/model-configs')).text();expect(response).not.toContain('secret-for-test-only');expect(response).toContain('apiKeyMasked');
+  expect(JSON.parse(response).models[0].timeoutMs).toBe(600000);
+  for(const timeoutMs of [999,600001])expect((await request('/api/admin/model-configs','PUT',{version:'2',models:[{...model,timeoutMs}]})).status).toBe(400);
+  expect((await (await request('/api/admin/model-configs')).json()).models[0].timeoutMs).toBe(600000);
   expect(readFileSync(join(dir,'screening.sqlite')).includes(Buffer.from('secret-for-test-only'))).toBe(false);
   expect(app.store.getConfig('model-configs').models[0].apiKey).not.toBe('secret-for-test-only');
 });

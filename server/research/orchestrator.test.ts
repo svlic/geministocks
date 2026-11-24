@@ -334,6 +334,25 @@ it('does not let synthesis manufacture a team score when independent analysis fa
   expect(result.dimensions.find(d=>d.id==='team')!.score0to5).toBeNull();expect(result.totalScore).toBe(67);
 });
 
+it.each([240000,600000])('allows a slow synthesis with timeout %s while respecting the remaining analysis budget',async timeoutMs=>{
+  snapshot.models[0].timeoutMs=timeoutMs;
+  const previous=mocks.call.getMockImplementation()!,clock=vi.spyOn(Date,'now');let now=Date.now();
+  clock.mockImplementation(()=>now);
+  try{
+    mocks.website.mockImplementation(async()=>{now+=60000;return {evidence:fixture.evidence,limitations:[]};});
+    mocks.call.mockImplementation(async(config,request)=>{
+      const synthesis=request.system.includes('Synthesize concise initial screening');
+      const duration=request.system.includes('Extract company identity')?90000:synthesis?180000:30000;
+      if(synthesis)expect(config.timeoutMs).toBe(timeoutMs===240000?240000:300000);
+      if(config.timeoutMs<duration)throw Object.assign(new Error('timeout'),{code:'timeout'});
+      now+=duration;return previous(config,request);
+    });
+    const result=await run();
+    expect(result.mode).toBe('standard');expect(result.summary).toBe(fixture.summary);
+    expect(result.execution.elapsedMs).toBe(360000);expect(result.issues).toEqual([]);
+  }finally{clock.mockRestore();}
+});
+
 it('returns validated results before the hard job deadline instead of losing them to worker timeout',async()=>{
   const previous=mocks.call.getMockImplementation()!;const clock=vi.spyOn(Date,'now');const start=Date.now();
   clock.mockReturnValue(start);

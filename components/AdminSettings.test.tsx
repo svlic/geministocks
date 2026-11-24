@@ -59,6 +59,9 @@ it("previews masked model settings, preserves blank keys, saves versioned config
   fireEvent.change(screen.getByLabelText("PDF understanding budget (minutes)"), {
     target: { value: "7" },
   });
+  fireEvent.change(screen.getByLabelText("Timeout (ms)"), {
+    target: { value: "300000" },
+  });
   fireEvent.change(screen.getByLabelText("Base URL"), {
     target: { value: "" },
   });
@@ -72,6 +75,7 @@ it("previews masked model settings, preserves blank keys, saves versioned config
     ([, options]) => options?.method === "PUT",
   )!;
   expect(JSON.parse(put[1]!.body as string).pdfUnderstandingTimeoutMs).toBe(420000);
+  expect(JSON.parse(put[1]!.body as string).models[0].timeoutMs).toBe(300000);
   expect(JSON.parse(put[1]!.body as string).models[0]).not.toHaveProperty(
     "apiKey",
   );
@@ -86,6 +90,18 @@ it("previews masked model settings, preserves blank keys, saves versioned config
     headers: { "x-csrf-token": "csrf" },
   });
   expect(screen.getByText("Version 2")).toBeTruthy();
+});
+it("rejects model timeouts beyond ten minutes before saving", async () => {
+  const fetcher = mockSettings();
+  render(<AdminSettings token="csrf" lang="en" />);
+  await screen.findByDisplayValue("configured-model");
+  fireEvent.change(screen.getByLabelText("Timeout (ms)"), {
+    target: { value: "600001" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
+  expect(screen.getByRole("alert").textContent).toContain("timeoutMs");
+  expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
+  expect(fetcher.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
 });
 it("requires valid per-stage sums before a scoring preview", async () => {
   mockSettings();
