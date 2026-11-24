@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { companySchema, dimensionSchema, claimSchema, comparableSchema, teamSchema, screeningResultSchema, pdfUnderstandingTimeoutSchema, type ModelConfig, type ScreeningResult, type Evidence, type ScoringConfig, type PolicyConfig } from '../../shared/screening-schema';
+import { companySchema, dimensionSchema, claimSchema, comparableSchema, teamSchema, teamKeys, screeningResultSchema, pdfUnderstandingTimeoutSchema, type ModelConfig, type ScreeningResult, type Evidence, type ScoringConfig, type PolicyConfig } from '../../shared/screening-schema';
 import { callModel } from '../gateway/index';
 import { ingestWebsite,extractPdf } from '../ingestion/index';
 import { Store } from '../persistence/store';
@@ -52,6 +52,7 @@ export async function executeScreening(store:Store,job:any,snapshot:Snapshot,pha
     const valid=validateEvidence(result);
     if(valid.dimensions.length)Object.assign(valid,calculateScores(valid.dimensions,valid.company?.stage??'unknown',snapshot.scoring));
     valid.execution.elapsedMs=Date.now()-started;
+    if(valid.mode==='standard'||valid.mode==='brief_insufficient')valid.mode=sufficiencyGate(valid.company,valid.dimensions)==='standard'&&valid.totalScore!==null?'standard':'brief_insufficient';
     if((valid.mode!=='standard'&&valid.mode!=='partial_error')||sufficiencyGate(valid.company,valid.dimensions)!=='standard')valid.totalScore=null;
     phase('output');return screeningResultSchema.parse(valid);
   };
@@ -169,7 +170,13 @@ export async function executeScreening(store:Store,job:any,snapshot:Snapshot,pha
       accept({team});
       const supportedTeam=team.founders.some(f=>f.professionalFacts.some(c=>c.evidenceIds.length));
       const teamDimension=result.dimensions.find(d=>d.id==='team');
-      if(teamDimension){teamDimension.score0to5=team.status==='evaluated'&&supportedTeam?teamScore(team.subScores):null;teamDimension.evidenceIds=[...new Set(team.founders.flatMap(f=>f.professionalFacts.flatMap(c=>c.evidenceIds)))];teamDimension.evidenceState=teamDimension.score0to5===null?'insufficient':'sufficient';}
+      if(teamDimension){
+        teamDimension.score0to5=team.status==='evaluated'&&supportedTeam?teamScore(team.subScores):null;
+        const assessments=teamKeys.filter(key=>team.subScores[key]!==null).map(key=>team.subScoreEvidence![key]!);
+        teamDimension.evidenceIds=[...new Set(assessments.flatMap(a=>a.evidenceIds))];
+        teamDimension.evidenceState=teamDimension.score0to5===null?'insufficient':assessments.some(a=>a.evidenceState==='partial')?'partial':'sufficient';
+        teamDimension.rationale=assessments.length?assessments.map(a=>a.rationale).join('\n').slice(0,6000):'无可支持的团队评分依据 / No supported team assessment';
+      }
     }catch(error){signal.throwIfAborted();result.mode='partial_error';limitations.push(`team_module_failed (${failureCode(error)}): 独立团队分析未完成，其他结果保留 / Team analysis unavailable; other results retained`);result.team=null;result.dimensions=result.dimensions.map(d=>d.id==='team'?{...d,score0to5:null,evidenceState:'insufficient'}:d);}
     try{
       const report=await structured('synthesis',reportSchema,`${SECTOR_PROMPT}\nSynthesize concise initial screening, not diligence. Use only supplied ledger IDs, never add source URLs. Keep team scoring from the independent agent unchanged.${limited?' Evidence is limited: summarize supported product/sector facts and key unknowns; do not invent missing facts or produce an overall score.':''}`,{company:result.company,team:result.team,dimensions:result.dimensions,evidence:permitted(),policyMatch:result.policyMatch});

@@ -53,9 +53,9 @@ export type CompanyIdentity = z.infer<typeof companySchema>;
 export type ResultMode = ScreeningResult['mode'];
 
 const weightRow = z.array(z.number().min(0).max(100)).length(6).refine(w => Math.abs(w.reduce((a,b) => a+b,0)-100)<0.00001, 'Weights must sum to 100');
-export const scoringSchema = z.object({ version: text, weights: z.object({ pre_seed: weightRow, seed: weightRow, series_a_plus: weightRow }).strict(), coverageThreshold: z.number().min(0.75).max(1), hardExcludeConfidence: z.number().min(0.85).max(1) }).strict();
+export const scoringSchema = z.object({ version: text, weights: z.object({ pre_seed: weightRow, seed: weightRow, series_a_plus: weightRow }).strict(), coverageThreshold: z.number().min(0.05).max(1), hardExcludeConfidence: z.number().min(0.85).max(1) }).strict();
 export type ScoringConfig = z.infer<typeof scoringSchema>;
-export const defaultScoring: ScoringConfig = {version:'1',weights:{pre_seed:[35,25,15,10,5,10],seed:[30,20,15,20,10,5],series_a_plus:[20,15,15,25,15,10]},coverageThreshold:0.75,hardExcludeConfidence:0.85};
+export const defaultScoring: ScoringConfig = {version:'2',weights:{pre_seed:[35,25,15,10,5,10],seed:[30,20,15,20,10,5],series_a_plus:[20,15,15,25,15,10]},coverageThreshold:0.05,hardExcludeConfidence:0.85};
 export const policySchema = z.object({ version:text, prompt:z.string().max(12000), rules:z.array(z.object({id:z.string().min(1).max(100), name:text, kind:z.enum(['hard_exclude','low_priority','focus','exception']),sectorTags:strings,definition:text,conditions:text,enabled:z.boolean(),priority:z.number().int().min(0).max(10000),notes:text}).strict()).max(50) }).strict().refine(p => new Set(p.rules.map(r=>r.id)).size===p.rules.length,'Duplicate rule IDs');
 export type PolicyConfig = z.infer<typeof policySchema>;
 export const modelSchema = z.object({ id:z.string().min(1).max(100), provider:z.literal('openai'), modelId:z.string().min(1).max(100), baseUrl:z.string().url().optional(), roles:z.array(z.enum(['research','team','synthesis'])).min(1), enabled:z.boolean(), timeoutMs:z.number().int().min(1000).max(120000),maxOutputTokens:z.number().int().min(256).max(16000),allowConfidential:z.boolean(),apiKey:z.string().max(1000).optional(),apiKeyMasked:z.string().optional() }).strict();

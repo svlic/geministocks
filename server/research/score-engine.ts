@@ -12,10 +12,13 @@ export function calculateScores(input:DimensionScore[],stage:Stage,config:Scorin
   const dimensions=dimensionIds.map((id,i)=>{
     const d=input.find(d=>d.id===id)??{id,score0to5:null,rationale:'Insufficient evidence',evidenceIds:[],evidenceState:'insufficient'};
     // Model weights are never trusted; the backend supplies the stage snapshot.
-    return dimensionSchema.parse({...d,weightPercent:weights[i]});
+    const valid=dimensionSchema.parse({...d,weightPercent:weights[i]});
+    if(valid.evidenceState==='insufficient'||!valid.evidenceIds.length)valid.score0to5=null;
+    else if(valid.evidenceState==='partial'&&valid.score0to5!==null)valid.score0to5=Math.min(valid.score0to5,2);
+    return valid;
   });
-  const scored=dimensions.filter(d=>d.score0to5!==null&&d.evidenceState==='sufficient'&&d.evidenceIds.length>0);
+  const scored=dimensions.filter(d=>d.score0to5!==null);
   const coverage=scored.reduce((s,d)=>s+d.weightPercent,0);
-  const eligible=coverage>=config.coverageThreshold*100&&dimensionIds.slice(0,3).every(id=>scored.some(d=>d.id===id));
+  const eligible=coverage>0&&coverage>=config.coverageThreshold*100;
   return {dimensions,evidenceCoverage:coverage/100,totalScore:eligible?Math.round(100*scored.reduce((s,d)=>s+d.score0to5!/5*d.weightPercent,0)/coverage):null};
 }

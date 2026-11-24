@@ -13,11 +13,12 @@ export function validateTeamIdentity(team:TeamScreening,evidence:Evidence[],comp
   const professionalIds=new Set(team.founders.flatMap(f=>f.professionalFacts.flatMap(f=>f.evidenceIds)));
   teamKeys.forEach(key=>{
     const assessment=team.subScoreEvidence?.[key];
-    if(!assessment||assessment.evidenceState!=='sufficient'||!assessment.evidenceIds.length||assessment.evidenceIds.some(id=>!professionalIds.has(id)))team.subScores[key]=null;
+    if(!assessment||assessment.evidenceState==='insufficient'||!assessment.evidenceIds.length||assessment.evidenceIds.some(id=>!professionalIds.has(id)))team.subScores[key]=null;
+    else if(assessment.evidenceState==='partial'&&team.subScores[key]!==null)team.subScores[key]=Math.min(team.subScores[key],2);
   });
   if(!team.founders.some(f=>f.professionalFacts.length)||!teamKeys.some(key=>team.subScores[key]!==null)){
     team.status='insufficient_evidence';teamKeys.forEach(k=>team.subScores[k]=null);team.strengths=[];team.weaknessesOrRisks=[];team.requiredMaterials=['团队介绍与可核实成果 / Team introduction and verifiable contribution evidence'];
-  }
+  }else team.status='evaluated';
   return team;
 }
 

@@ -98,7 +98,7 @@ it('migrates legacy settings once, preserves secrets and snapshots, and requires
   const common={modelId:'legacy-model',roles:['research'],enabled:true,timeoutMs:10000,maxOutputTokens:1000,allowConfidential:false,apiKey,webSearch:true,xSearch:true};
   const legacy={version:'4',models:[{...common,id:'native',provider:'xai'},{...common,id:'compatible',provider:'openai',baseUrl:'https://compatible.example/v1'}]};
   app.store.setConfig('model-configs',legacy);
-  app.store.setConfig('scoring',{...app.store.getConfig('scoring'),researchTurns:3,teamTurns:2});
+  app.store.setConfig('scoring',{...app.store.getConfig('scoring'),version:'1',researchTurns:3,teamTurns:2});
   const job=await (await request('/api/screen/jobs','POST',{website:'https://example.org'})).json();
   const before=app.store.db.prepare('SELECT snapshot FROM screening_jobs WHERE id=?').get(job.id) as any;
   const reopen=async()=>{
@@ -117,6 +117,24 @@ it('migrates legacy settings once, preserves secrets and snapshots, and requires
   expect(scoring.version).toBe('2');expect(scoring).not.toHaveProperty('researchTurns');expect(scoring).not.toHaveProperty('teamTurns');
   await reopen();expect((await (await request('/api/admin/model-configs')).json()).version).toBe('5');
   expect((await request('/api/admin/model-configs','PUT',{version:'5',models:legacy.models.map(({webSearch,xSearch,apiKey,...m})=>m)})).status).toBe(400);
+});
+it.each([
+  ['1',.75,'2',.05],
+  ['4',.9,'4',.9],
+  ['3',.75,'3',.75],
+] as const)('upgrades only the untouched default coverage threshold (%s, %s) without rewriting jobs',async(version,coverageThreshold,nextVersion,nextThreshold)=>{
+  app.store.setConfig('scoring',{...app.store.getConfig('scoring'),version,coverageThreshold});
+  const {id}=await (await request('/api/screen/jobs','POST',{website:'https://example.org'})).json();await app.runNext();
+  const before=app.store.db.prepare('SELECT snapshot,result FROM screening_jobs WHERE id=?').get(id);
+  for(let i=0;i<2;i++){
+    await app.close();app=createApplication({dataDir:dir,secret:'ab'.repeat(32),username:'admin',password:'test-password-123',demoMode:true,origin:'http://localhost'});
+    await new Promise<void>(r=>app.server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(app.server.address() as any).port}`;
+    expect(await (await request('/api/admin/scoring')).json()).toMatchObject({version:nextVersion,coverageThreshold:nextThreshold});
+    expect(app.store.db.prepare('SELECT snapshot,result FROM screening_jobs WHERE id=?').get(id)).toEqual(before);
+  }
+  const next=await (await request('/api/screen/jobs','POST',{website:'https://example.org'})).json();
+  const row=app.store.db.prepare('SELECT snapshot FROM screening_jobs WHERE id=?').get(next.id) as any;
+  expect(app.store.decrypt(row.snapshot).scoring.coverageThreshold).toBe(nextThreshold);
 });
 it('executes four explicit demo modes with no fabricated live-search claims and no user follow-up state',async()=>{
   for(const [scenario,mode] of [['standard','standard'],['insufficient','brief_insufficient'],['policy','brief_policy'],['failure','failed']]){

@@ -38,6 +38,41 @@ it('runs independent team analysis on supplied evidence and discloses the absenc
   expect(result.limitations.join(' ')).toContain('external_search_unavailable');
   expect(result.evidence.map(e=>e.id)).toEqual(['private',...fixture.evidence.map(e=>e.id)]);
 });
+it('scores a vague but attributable deck-only team without external corroboration or preliminary scores',async()=>{
+  fixture.company!.stage='unknown';
+  fixture.evidence=fixture.evidence.map(e=>({...e,type:'uploaded_deck',url:null,documentId:'deck',page:17,quoteOrSummary:'FICTIONAL: 示例创始人 A / Fictional founder A leads actuator engineering; relevant experience is claimed but details and execution results are not disclosed.'}));
+  fixture.dimensions=fixture.dimensions.map(d=>({...d,score0to5:d.id==='product_technology'?1.75:d.id==='sector_positioning'?1.25:null,evidenceState:d.id==='product_technology'||d.id==='sector_positioning'?'partial':'insufficient'}));
+  fixture.team!.status='insufficient_evidence';
+  fixture.team!.founders[0].professionalFacts=[{text:'Company identifies the founder as engineering lead; details are incomplete',verification:'company_claim',evidenceIds:['demo-web']}];
+  fixture.team!.subScores={founderMarketFit:1.5,complementarity:null,trackRecord:null,execution:null,commitment:null};
+  fixture.team!.subScoreEvidence={founderMarketFit:{rationale:'Relevant engineering role is stated; experience and results are incomplete and not independently verified',evidenceIds:['demo-web'],evidenceState:'partial'}};
+  mocks.pdf.mockResolvedValue({evidence:fixture.evidence,limitations:[]});mocks.website.mockRejectedValue(new Error('unavailable'));
+  writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');
+  const previous=mocks.call.getMockImplementation()!;
+  mocks.call.mockImplementation(async(config,request)=>{
+    const response=await previous(config,request);
+    if(request.system.includes('Extract company identity')){
+      const entity=JSON.parse(response.text);entity.dimensions=entity.dimensions.map((d:any)=>({...d,score0to5:null}));response.text=JSON.stringify(entity);
+    }
+    return response;
+  });
+  const result=await run({uploadId:'deck'});
+  expect(result.mode).toBe('standard');expect(result.execution.searchUsed).toBe(false);
+  expect(result.team!.status).toBe('evaluated');expect(result.team!.founders[0].professionalFacts[0].verification).toBe('company_claim');
+  expect(result.dimensions[0]).toMatchObject({score0to5:1.5,evidenceState:'partial',evidenceIds:['demo-web']});
+  expect(result.dimensions[0].rationale).toContain('incomplete');
+  expect(result.evidenceCoverage).toBe(.75);expect(result.totalScore).toBe(31);
+  expect(result.dimensions.find(d=>d.id==='capital_efficiency')!.score0to5).toBeNull();
+});
+it.each([4,5])('decides the final report mode from scored coverage at %s percent',async weight=>{
+  snapshot.scoring={...defaultScoring,weights:{...defaultScoring.weights,seed:[35-weight,20,15,20,weight,10]}};
+  fixture.team!.founders=[];
+  fixture.dimensions=fixture.dimensions.map(d=>({...d,score0to5:d.id==='business_economics'?1.5:null,evidenceState:d.id==='business_economics'?'partial':'insufficient'}));
+  const result=await run();
+  expect(result.evidenceCoverage).toBe(weight/100);
+  expect(result.totalScore).toBe(weight===5?30:null);
+  expect(result.mode).toBe(weight===5?'standard':'brief_insufficient');
+});
 it('writes a limited report for insufficient evidence without fabricating founders or running team scoring',async()=>{
   fixture=demoFixture('job','insufficient');
   fixture.productAndTechnology=[{text:'已读取的产品自述 / Retrieved product statement',verification:'company_claim',evidenceIds:['demo-web']}];
@@ -68,13 +103,13 @@ it('does not bind a same-name external biography without a company identity link
   expect(result.team!.founders[0].professionalFacts).toEqual([]);
   expect(result.team!.status).toBe('insufficient_evidence');
   expect(result.dimensions.find(d=>d.id==='team')!.score0to5).toBeNull();
-  expect(result.totalScore).toBeNull();
+  expect(result.totalScore).toBe(67);expect(result.evidenceCoverage).toBe(.55);
 });
 it('does not manufacture founders or team scores from generic expertise claims',async()=>{
   fixture.evidence[0].quoteOrSummary='团队由行业专家组成，未披露姓名或履历。';
   const result=await run();
   expect(result.team!.status).toBe('insufficient_evidence');expect(result.team!.founders).toEqual([]);
-  expect(result.dimensions.find(d=>d.id==='team')!.score0to5).toBeNull();expect(result.totalScore).toBeNull();
+  expect(result.dimensions.find(d=>d.id==='team')!.score0to5).toBeNull();expect(result.totalScore).toBe(67);
 });
 it('uses server policy and stops before full research on a precise hard exclusion',async()=>{
   snapshot.policy={version:'private-policy',prompt:'',rules:[{id:'exclude',name:'明确不关注',kind:'hard_exclude',sectorTags:['coding-agent'],definition:'Code modification',conditions:'',enabled:true,priority:1,notes:''}]};
@@ -90,14 +125,14 @@ it('uses server policy and stops before full research on a precise hard exclusio
   expect(result.mode).toBe('brief_policy');expect(result.policyMatch.policyVersion).toBe('private-policy');
   expect(result.team).toBeNull();expect(result.dimensions).toEqual([]);expect(result.directPrivateComps).toEqual([]);expect(result.totalScore).toBeNull();
 });
-it('only aggregates team sub-scores with their own sufficient, bound professional evidence',async()=>{
+it('accepts conservative partial team scores but still rejects missing or unbound professional evidence',async()=>{
   delete fixture.team!.subScoreEvidence!.founderMarketFit;
   fixture.team!.subScoreEvidence!.complementarity!.evidenceState='partial';
   fixture.team!.subScoreEvidence!.trackRecord!.evidenceIds=[];
   fixture.team!.subScores.commitment=5;
   const result=await run();
-  expect(result.team!.subScores).toEqual({founderMarketFit:null,complementarity:null,trackRecord:null,execution:4,commitment:null});
-  expect(result.dimensions.find(d=>d.id==='team')!.score0to5).toBe(4);
+  expect(result.team!.subScores).toEqual({founderMarketFit:null,complementarity:2,trackRecord:null,execution:4,commitment:null});
+  expect(result.dimensions.find(d=>d.id==='team')).toMatchObject({score0to5:2,evidenceState:'partial'});
   expect(result.team!.subScoreEvidence!.execution!.rationale).toContain('iteration');
 });
 it.each([true,false])('PDF-only website evidence requires a publicly confirmed company identity: %s',async confirmed=>{
@@ -155,7 +190,7 @@ it('does not let synthesis manufacture a team score when independent analysis fa
     return response;
   });
   const result=await run();expect(result.mode).toBe('partial_error');expect(result.team).toBeNull();expect(result.productAndTechnology).toEqual(fixture.productAndTechnology);
-  expect(result.dimensions.find(d=>d.id==='team')!.score0to5).toBeNull();expect(result.totalScore).toBeNull();
+  expect(result.dimensions.find(d=>d.id==='team')!.score0to5).toBeNull();expect(result.totalScore).toBe(67);
 });
 
 it('returns validated results before the hard job deadline instead of losing them to worker timeout',async()=>{

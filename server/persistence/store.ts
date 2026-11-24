@@ -32,6 +32,11 @@ export class Store {
       models.version=String(Number(models.version)+1);this.setConfig('model-configs',models);
     }
     const scoring=this.getConfig('scoring');
+    // Upgrade only the untouched v1 default; preserve administrator revisions.
+    if(scoring.version==='1'&&scoring.coverageThreshold===.75){
+      scoring.coverageThreshold=defaultScoring.coverageThreshold;
+      scoring.version='2';this.setConfig('scoring',scoring);
+    }
     if('researchTurns' in scoring||'teamTurns' in scoring){
       delete scoring.researchTurns;delete scoring.teamTurns;
       scoring.version=String(Number(scoring.version)+1);this.setConfig('scoring',scoring);
