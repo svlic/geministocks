@@ -130,8 +130,8 @@ it.each(["identity", "understanding"])("locks submitted inputs, displays server 
 it.each<[ResultMode, string]>([
   ["brief_insufficient", "Insufficient information"],
   ["brief_policy", "Policy mismatch"],
-  ["failed", "Technical failure"],
-  ["partial_error", "Partial technical failure"],
+  ["failed", "Analysis incomplete"],
+  ["partial_error", "Analysis partially complete"],
 ])("distinguishes %s", (mode, title) => {
   render(<ScreeningResultView result={result(mode)} lang="en" />);
   expect(screen.getByRole("heading", { name: title })).toBeTruthy();
@@ -139,6 +139,24 @@ it.each<[ResultMode, string]>([
     expect(
       screen.queryByRole("heading", { name: "Direct private comparables" }),
     ).toBeNull();
+});
+it.each(["zh", "en"] as const)("shows classified causes without calling every incomplete analysis a technical failure in %s", (lang) => {
+  const report = result("partial_error");
+  report.issues = [
+    { module: "website", kind: "source_limit", code: "robots_unavailable" },
+    { module: "synthesis", kind: "invalid_output", code: "invalid_evidence" },
+    { module: "team", kind: "execution_failure", code: "timeout" },
+    { module: "policy", kind: "configuration", code: "authentication" },
+    { module: "analysis", kind: "unknown_failure", code: "module_error" },
+  ];
+  render(<ScreeningResultView result={report} lang={lang} />);
+  for (const name of lang === "zh"
+    ? ["来源访问或材料限制", "模型输出校验未通过", "已确认的执行故障", "模型配置或权限问题", "原因未确认的执行异常"]
+    : ["Source access or material restriction", "Model output failed validation", "Confirmed execution failure", "Model configuration or permission issue", "Unclassified execution exception"])
+    expect(screen.getByText(name)).toBeTruthy();
+  expect(screen.queryByText(/部分技术故障|Partial technical failure/)).toBeNull();
+  for (const code of ["robots_unavailable", "invalid_evidence", "timeout", "authentication", "module_error"])
+    expect(screeningMarkdown(report)).toContain(code.replace(/_/g, "\\_"));
 });
 it("exports brief and standard conclusions with PDF citations, metadata and limitations", () => {
   for (const mode of [

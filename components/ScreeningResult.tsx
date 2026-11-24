@@ -7,8 +7,8 @@ const labels: Record<string, [string, string]> = {
   standard: ["Screening report", "初筛报告"],
   brief_insufficient: ["Insufficient information", "信息不足"],
   brief_policy: ["Policy mismatch", "策略不匹配"],
-  failed: ["Technical failure", "技术故障"],
-  partial_error: ["Partial technical failure", "部分技术故障"],
+  failed: ["Analysis incomplete", "分析未完成"],
+  partial_error: ["Analysis partially complete", "部分分析未完成"],
   company: ["Project overview", "项目概览"],
   policyMatch: ["Policy match", "策略匹配"],
   team: ["Team screening", "团队初评"],
@@ -22,6 +22,20 @@ const labels: Record<string, [string, string]> = {
   majorRisks: ["Major risks", "主要风险"],
   missingMaterials: ["Required materials", "待索取材料"],
   limitations: ["Evidence coverage and execution limitations", "资料覆盖与执行限制"],
+  issues: ["Incomplete analysis: causes", "分析受限原因"],
+  module: ["Affected module", "受影响模块"],
+  kind: ["Cause category", "原因分类"],
+  code: ["Diagnostic code", "诊断代码"],
+  source_limit: ["Source access or material restriction", "来源访问或材料限制"],
+  invalid_output: ["Model output failed validation", "模型输出校验未通过"],
+  configuration: ["Model configuration or permission issue", "模型配置或权限问题"],
+  execution_failure: ["Confirmed execution failure", "已确认的执行故障"],
+  unknown_failure: ["Unclassified execution exception", "原因未确认的执行异常"],
+  pdf: ["PDF reading", "PDF 读取"],
+  public_search: ["Public search", "公开搜索"],
+  identity_enrichment: ["Public identity enrichment", "公开身份补充"],
+  policy: ["Policy assessment", "策略评估"],
+  analysis: ["Identity and analysis", "身份识别与分析"],
   execution: ["Execution metadata", "执行信息"],
   evidence: ["Sources and page map", "来源与页码映射"],
   verified: ["Independently verified", "独立核实"],
@@ -116,7 +130,7 @@ const labels: Record<string, [string, string]> = {
   evaluated: ["Evaluated", "已评估"],
   insufficient_evidence: ["Insufficient evidence", "证据不足"],
   not_run: ["Not run", "未执行"],
-  error: ["Technical error", "技术错误"],
+  error: ["Analysis error", "分析异常"],
   pre_seed: ["Pre-seed / angel", "Pre-seed / 天使"],
   seed: ["Seed", "种子轮"],
   series_a_plus: ["Series A+", "A 轮及以后"],
@@ -229,6 +243,8 @@ function Value({
     field === "status" ||
     field === "category" ||
     field === "valuationBasis" ||
+    field === "module" ||
+    field === "kind" ||
     field === "type" ||
     field === "id"
   )
@@ -304,8 +320,8 @@ export default function ScreeningResultView({
       {failure && (
         <p className="notice danger">
           {lang === "zh"
-            ? "技术限制不等于公司资料不足。可新建任务重试。"
-            : "A technical limitation is not a lack of company information. Start a new task to retry."}
+            ? "本轮部分步骤未完成，不代表公司资料或能力不足。请查看具体原因：补充材料、调整访问或配置，以及重新执行适用于不同情况。"
+            : "Some analysis steps did not complete. This does not establish missing company information or poor capability. Check the cause before supplying materials, adjusting access or configuration, or retrying."}
         </p>
       )}
       {r.mode === "brief_policy" && (
@@ -316,6 +332,12 @@ export default function ScreeningResultView({
         </p>
       )}
       <p className="report-summary">{r.summary}</p>
+      {!!r.issues?.length && (
+        <section aria-label={label("issues", lang)}>
+          <h3>{label("issues", lang)}</h3>
+          <Value value={r.issues} lang={lang} />
+        </section>
+      )}
       <div className="metrics">
         <div>
           <small>
@@ -332,8 +354,8 @@ export default function ScreeningResultView({
                   : "Stopped by policy; quality not scored"
                 : failure
                 ? lang === "zh"
-                  ? "技术限制，未形成综合分"
-                  : "Overall score unavailable due to technical limitations"
+                  ? "分析未完成或证据覆盖不足，未形成综合分；详见具体原因与维度说明"
+                  : "No overall score: incomplete analysis or insufficient scored coverage; see causes and dimension details"
                 : lang === "zh"
                   ? "信息不足，无法形成综合分"
                   : "Insufficient evidence for an overall score"}

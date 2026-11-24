@@ -45,6 +45,8 @@ export const screeningResultSchema = z.object({
   policyBonus: z.number().min(0).max(5).optional(), priorityScore: z.number().min(0).max(100).nullable().optional(),
   sectorAndPositioning: z.array(claimSchema).max(20), productAndTechnology: z.array(claimSchema).max(20), directPrivateComps: z.array(comparableSchema).max(5), adjacentCompetitors: z.array(comparableSchema).max(5), publicCompanyRefs: z.array(comparableSchema).max(5),
   majorStrengths: z.array(claimSchema).max(10), majorRisks: z.array(claimSchema).max(10), missingMaterials: strings, evidence: z.array(evidenceSchema).max(100), limitations: strings,
+  // Optional for stored reports created before failure causes were classified.
+  issues: z.array(z.object({module:z.enum(['pdf','website','public_search','identity_enrichment','policy','team','synthesis','analysis']),kind:z.enum(['source_limit','invalid_output','configuration','execution_failure','unknown_failure']),code:z.string().min(1).max(100)}).strict()).max(40).optional(),
   execution: z.object({provider: text, modelId: text, searchUsed: z.boolean(), xSearchUsed: z.boolean(), elapsedMs: z.number().nonnegative(), approximateCost: z.number().nullable().optional()}).strict(),
 }).strict();
 export type ScreeningResult = z.infer<typeof screeningResultSchema>;

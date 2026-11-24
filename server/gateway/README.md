@@ -15,13 +15,17 @@ It never includes upstream bodies, keys, or prompts. No logging is performed.
   prose or extra metadata. Responses search flags require completed `web_search_call`
   records. Twitter/X coverage is recorded from actual queries targeting x.com or
   twitter.com, including ordinary web search. It does not guarantee post retrieval.
-  Only structured HTTPS `url_citation` annotations accompanied by a completed search
-  nominate candidate sources; the research layer still securely fetches their text
+  Structured HTTPS `url_citation` annotations accompanied by a completed search
+  and completed calls' `action.sources` nominate up to 24 candidate sources;
+  the research layer still securely fetches their text
   before accepting evidence. Model prose, snippets and bare links are not evidence.
 - One timeout (1–600000 ms, extended for PDF understanding) covers the entire call, optional retry, and bounded
   2 MB response body. Caller cancellation is supported. Explicit HTTP 429,
   502, 503, 504 rejection can be retried once after 100ms; ambiguous network
   errors/timeouts are never blindly replayed because billing may have occurred.
+  Search requests include `web_search_call.action.sources` for backup candidates.
+  HTTP 400/422 permits one retry without this optional `include` parameter, still
+  requiring the same search tool. All retries share the existing two-attempt cap.
 - Config and system prompts must come from authorized server-side snapshots.
   OpenAI-compatible base URLs are admin-controlled HTTPS endpoints; ordinary
   users must never be allowed to supply them or turn this into a proxy.

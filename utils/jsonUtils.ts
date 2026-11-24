@@ -80,7 +80,7 @@ export function parseModelJson(content: unknown): any {
     for (const candidate of candidates) {
         try {
             const value = JSON.parse(candidate);
-            if (value !== null && typeof value === 'object') return value;
+            if (typeof value === 'object') return value;
         } catch { /* Try the next candidate before repairing malformed JSON. */ }
     }
     for (const candidate of candidates) {

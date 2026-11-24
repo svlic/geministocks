@@ -28,7 +28,7 @@ describe('model gateway', () => {
     const result = await callModel({ ...config, baseUrl: 'https://compatible.example/custom/v1/' }, { system: 'Public research only', input: 'Public domain', webSearch: true });
     const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://compatible.example/custom/v1/responses');
-    expect(JSON.parse(String(init.body))).toEqual({ model: 'configured-model', input: [{ role: 'system', content: 'Public research only' }, { role: 'user', content: 'Public domain' }], tools: [{ type: 'web_search' }], tool_choice: 'required', max_tool_calls: 6, max_output_tokens: 400 });
+    expect(JSON.parse(String(init.body))).toEqual({ model: 'configured-model', input: [{ role: 'system', content: 'Public research only' }, { role: 'user', content: 'Public domain' }], tools: [{ type: 'web_search' }], tool_choice: 'required', max_tool_calls: 6, max_output_tokens: 400, include: ['web_search_call.action.sources'] });
     expect(result).toMatchObject({ searchUsed: true, xSearchUsed: true, citations: [{ url: 'https://x.com/acme/status/123', title: 'Public post' }], usage });
   });
   it.each([{ output: [] }, { output: [{ type: 'web_search_call', status: 'failed', action: { query: 'site:x.com acme' } }] }])('does not trust citations, prose or usage without a completed search call', async ({ output }) => {
@@ -44,6 +44,36 @@ describe('model gateway', () => {
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Findings', annotations: [] }] },
     ] })));
     await expect(callModel(config, { system: '', input: '', webSearch: true })).resolves.toMatchObject({ searchUsed: true, xSearchUsed: false });
+  });
+  it('retains tool-returned backup URLs even when the final answer does not cite them', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ status: 'completed', output: [
+      { type: 'web_search_call', status: 'completed', action: { type: 'search', query: 'site:x.com example', sources: [
+        { type: 'url', url: 'https://x.com/example/status/123' },
+        { type: 'url', url: 'http://unsafe.example' },
+        { type: 'url', url: 'https://news.example/backup' },
+      ] } },
+      { type: 'web_search_call', status: 'failed', action: { sources: [{ type: 'url', url: 'https://failed.example/' }] } },
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Public findings https://invented.example', annotations: [
+        { type: 'url_citation', url: 'https://news.example/backup', title: 'Cited source' },
+      ] }] },
+    ] })));
+    const result = await callModel(config, { system: '', input: '', webSearch: true });
+    expect(result.citations).toEqual([
+      { url: 'https://news.example/backup', title: 'Cited source' },
+      { url: 'https://x.com/example/status/123', title: 'x.com' },
+    ]);
+  });
+  it('retries a relay rejection of optional source expansion without dropping required search', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response('', { status: 400 })).mockResolvedValueOnce(Response.json({ status: 'completed', output: [
+      { type: 'web_search_call', status: 'completed', action: { query: 'example company' } },
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Public findings', annotations: [] }] },
+    ] }));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(callModel(config, { system: '', input: '', webSearch: true })).resolves.toMatchObject({ searchUsed: true });
+    const requests = fetcher.mock.calls.map(([, init]) => JSON.parse(init.body));
+    expect(requests[0].include).toEqual(['web_search_call.action.sources']);
+    expect(requests[1].include).toBeUndefined();
+    expect(requests[1]).toMatchObject({ tools: [{ type: 'web_search' }], tool_choice: 'required' });
   });
   it('rejects incomplete Responses output without replaying the search', async () => {
     const fetcher = vi.fn(async () => Response.json({ status: 'incomplete', output: [] }));vi.stubGlobal('fetch', fetcher);

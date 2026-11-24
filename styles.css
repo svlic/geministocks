@@ -406,6 +406,9 @@ textarea::placeholder {
   padding-top: 24px;
   margin-top: 26px;
 }
+.screening-report section + .metrics {
+  margin-top: 24px;
+}
 .screening-report details {
   margin: 24px 0;
   font-size: 12px;

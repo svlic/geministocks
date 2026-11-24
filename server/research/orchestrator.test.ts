@@ -90,9 +90,18 @@ it('omits confidential data from every role when one downstream role is not perm
   await run({website:'https://public.example.org',uploadId:'deck'});
   for(const c of mocks.call.mock.calls){expect(c[1].input).not.toContain('SECRET-DECK-CONTENT');expect(c[0].timeoutMs).toBeLessThanOrEqual(10000);}
 });
+it('reports denied PDF processing as a permission issue, not missing company material',async()=>{
+  snapshot.models[0].allowConfidential=false;writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');
+  const result=await run({uploadId:'deck'});
+  expect(result.mode).toBe('failed');expect(result.totalScore).toBeNull();
+  expect(result.issues).toEqual([{module:'analysis',kind:'configuration',code:'confidential_processing_disabled'}]);
+  expect(result.summary).toContain('PDF 已读取');expect(result.missingMaterials).toEqual([]);
+  expect(mocks.call).not.toHaveBeenCalled();
+});
 it('rejects invented ledger IDs instead of publishing fake verified conclusions',async()=>{
   fixture.majorStrengths=[{text:'Invented source claim',verification:'verified',evidenceIds:['nonexistent']}];
   const result=await run();expect(result.mode).toBe('partial_error');expect(result.majorStrengths).toEqual([]);
+  expect(result.issues).toEqual([{module:'synthesis',kind:'invalid_output',code:'invalid_evidence'}]);
   expect(result.team!.status).toBe('evaluated');expect(result.dimensions.find(d=>d.id==='product_technology')!.score0to5).not.toBeNull();
 });
 it('does not bind a same-name external biography without a company identity link',async()=>{
@@ -111,6 +120,98 @@ it('does not manufacture founders or team scores from generic expertise claims',
   const result=await run();
   expect(result.team!.status).toBe('insufficient_evidence');expect(result.team!.founders).toEqual([]);
   expect(result.dimensions.find(d=>d.id==='team')!.score0to5).toBeNull();expect(result.totalScore).toBe(67);
+});
+it.each(['null','empty'] as const)('requests team materials instead of reporting a technical failure for %s team evidence',async response=>{
+  fixture.evidence[0].quoteOrSummary='FICTIONAL: Product workflow and target customers only; no team information disclosed.';
+  fixture.missingMaterials=['客户验证材料 / Customer validation evidence'];
+  if(response==='null')fixture.team=null;
+  else{
+    fixture.team!.status='insufficient_evidence';fixture.team!.founders=[];
+    fixture.team!.subScores={founderMarketFit:null,complementarity:null,trackRecord:null,execution:null,commitment:null};
+    fixture.team!.subScoreEvidence={};fixture.team!.requiredMaterials=[];
+  }
+  mocks.search.mockResolvedValue({evidence:[],limitations:[],searchUsed:true,xSearchUsed:false,elapsedMs:5});
+  const result=await run();
+  expect(result.mode).toBe('standard');
+  expect(result.execution.searchUsed).toBe(true);
+  expect(result.team).toMatchObject({status:'insufficient_evidence',founders:[]});
+  expect(result.dimensions.find(d=>d.id==='team')).toMatchObject({score0to5:null,evidenceState:'insufficient',rationale:expect.stringContaining('需补充团队介绍')});
+  expect(result.missingMaterials).toEqual(expect.arrayContaining(['客户验证材料 / Customer validation evidence','团队介绍与可核实成果 / Team introduction and verifiable contribution evidence']));
+  expect(result.productAndTechnology).toEqual(fixture.productAndTechnology);
+  expect(result.totalScore).toBe(67);
+  expect(result.limitations.join(' ')).not.toContain('module_failed');
+});
+it.each([
+  ['pdf','invalid_pdf','brief_insufficient','source_limit'],
+  ['pdf','pdf_page_limit','brief_insufficient','source_limit'],
+  ['website','robots_unavailable','brief_insufficient','source_limit'],
+  ['website','unsafe_address','brief_insufficient','source_limit'],
+  ['website','site_http_error','brief_insufficient','source_limit'],
+  ['website','site_timeout','failed','execution_failure'],
+  ['pdf','pdf_parser_unavailable','failed','execution_failure'],
+  ['public_search','unavailable','failed','execution_failure'],
+] as const)('classifies unavailable %s sources with %s without guessing company information',async(module,code,mode,kind)=>{
+  mocks.website.mockResolvedValue({evidence:[],limitations:[]});
+  mocks.pdf.mockResolvedValue({evidence:[],limitations:[]});
+  mocks[module==='pdf'?'pdf':module==='website'?'website':'search'].mockRejectedValue(Object.assign(new Error('PRIVATE-UPSTREAM-BODY'),{code}));
+  writeFileSync(join(store.uploadsDir,'deck'),'%PDF-fixture');
+  const result=await run({website:'https://public.example.org',uploadId:'deck'});
+  expect(result.mode).toBe(mode);expect(result.totalScore).toBeNull();
+  expect(result.issues).toEqual([{module,kind,code}]);
+  expect(result.summary).toContain('不能据此认定公司没有相关信息');
+  expect(result.missingMaterials.join(' ')).toContain('可读取');
+  expect(JSON.stringify(result)).not.toContain('PRIVATE-UPSTREAM-BODY');
+  expect(mocks.call).not.toHaveBeenCalled();
+});
+it.each([
+  ['timeout','execution_failure'],['authentication','configuration'],['incomplete','invalid_output'],['unexpected-private-code','unknown_failure'],
+] as const)('classifies team failure %s independently from evidence sufficiency',async(code,kind)=>{
+  const previous=mocks.call.getMockImplementation()!;
+  mocks.call.mockImplementation(async(config,request)=>{
+    if(request.system.includes('Independently screen only'))throw Object.assign(new Error('PRIVATE-UPSTREAM-BODY'),{code});
+    return previous(config,request);
+  });
+  const result=await run();
+  expect(result.mode).toBe('partial_error');
+  expect(result.issues).toEqual([{module:'team',kind,code:kind==='unknown_failure'?'module_error':code}]);
+  expect(result.dimensions.find(d=>d.id==='team')!.rationale).toContain('不能据此判断团队材料不足');
+  expect(result.productAndTechnology).toEqual(fixture.productAndTechnology);
+  expect(JSON.stringify(result)).not.toContain('PRIVATE-UPSTREAM-BODY');
+});
+it('classifies repeated malformed synthesis as invalid output while preserving earlier scores and material gaps',async()=>{
+  fixture.missingMaterials=['公开客户验证 / Public customer validation'];
+  const previous=mocks.call.getMockImplementation()!;
+  mocks.call.mockImplementation(async(config,request)=>request.system.includes('Synthesize concise')?{text:'not JSON',elapsedMs:5}:previous(config,request));
+  const result=await run();
+  expect(result.mode).toBe('partial_error');
+  expect(result.issues).toEqual([{module:'synthesis',kind:'invalid_output',code:'invalid_json'}]);
+  expect(result.totalScore).toBe(68);expect(result.missingMaterials).toContain('公开客户验证 / Public customer validation');
+});
+it('retains omitted dimensions and extraction material gaps when synthesis has no updates',async()=>{
+  fixture.missingMaterials=['公开客户验证 / Public customer validation'];
+  const previous=mocks.call.getMockImplementation()!;
+  mocks.call.mockImplementation(async(config,request)=>{
+    const response=await previous(config,request);
+    if(request.system.includes('Synthesize concise')){
+      const value=JSON.parse(response.text);value.dimensions=[];value.missingMaterials=[];response.text=JSON.stringify(value);
+    }
+    return response;
+  });
+  const result=await run();
+  expect(result.mode).toBe('standard');expect(result.totalScore).toBe(68);expect(result.issues).toEqual([]);
+  expect(result.missingMaterials).toContain('公开客户验证 / Public customer validation');
+  expect(result.dimensions.find(d=>d.id==='product_technology')!.score0to5).toBe(4);
+});
+it.each([true,false])('treats missing identity and all unsupported dimensions as evidence gaps (identity unknown: %s)',async unknownIdentity=>{
+  if(unknownIdentity)fixture.company=null;
+  fixture.dimensions=fixture.dimensions.map(d=>({...d,score0to5:null,evidenceIds:[],evidenceState:'insufficient'}));
+  fixture.missingMaterials=[];
+  const result=await run();
+  expect(result.mode).toBe('brief_insufficient');expect(result.totalScore).toBeNull();expect(result.issues).toEqual([]);
+  expect(result.team).toBeNull();
+  expect(result.dimensions.find(d=>d.id==='team')!.rationale).toContain('未启动独立团队评分');
+  for(const material of ['产品功能','目标客户','产品使用','商业模式','资金使用'])expect(result.missingMaterials.join(' ')).toContain(material);
+  if(unknownIdentity)expect(result.missingMaterials.join(' ')).toContain('可确认公司身份');
 });
 it('uses server policy and stops before full research on a precise hard exclusion',async()=>{
   snapshot.policy={version:'private-policy',prompt:'',rules:[{id:'exclude',name:'明确不关注',kind:'hard_exclude',sectorTags:['coding-agent'],definition:'Code modification',conditions:'',enabled:true,priority:1,notes:''}]};
@@ -161,6 +262,7 @@ it.each(['disabled','null','unmatched','failure','invalid-evidence'] as const)('
   if(scenario==='unmatched')expect(result.policyMatch?.status).toBe('unknown');
   else expect(result.policyMatch).toBeNull();
   expect(result.limitations.some(l=>l.startsWith('policy_module_failed'))).toBe(scenario==='failure'||scenario==='invalid-evidence');
+  expect(result.issues).toEqual(scenario==='failure'?[{module:'policy',kind:'unknown_failure',code:'module_error'}]:scenario==='invalid-evidence'?[{module:'policy',kind:'invalid_output',code:'invalid_evidence'}]:[]);
 });
 it('accepts conservative partial team scores but still rejects missing or unbound professional evidence',async()=>{
   delete fixture.team!.subScoreEvidence!.founderMarketFit;

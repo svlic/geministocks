@@ -533,8 +533,8 @@ export default function App() {
                           )
                         : job.status === "failed"
                           ? t(
-                              "Technical failure. This is not an information-insufficiency judgment.",
-                              "技术故障，不代表公司资料不足。",
+                              "Task did not complete. Execution or restart recovery failed; this is not a judgment about company information.",
+                              "任务未完成：执行中断或重启恢复失败，不代表公司资料不足。",
                             )
                           : t("Current server phase: ", "当前服务器阶段：") +
                             phaseNames[lang][phases.indexOf(job.phase)]}

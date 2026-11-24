@@ -217,6 +217,6 @@ export async function assertPublicUrl(value: string): Promise<URL> {
 export async function fetchPublicPage(value: string, signal?: AbortSignal): Promise<{ url: string; title: string; text: string }> {
   const result = await ingestOnePage(value, signal);
   const page = result.evidence[0];
-  if (!page?.url) return fail('site_read_limit', result.limitations[0] ?? 'No readable public page was retrieved.');
+  if (!page?.url) return fail(result.limitations.some(l => l.startsWith('robots_disallowed:')) ? 'robots_disallowed' : 'site_read_limit', result.limitations[0] ?? 'No readable public page was retrieved.');
   return { url: page.url, title: page.title, text: page.quoteOrSummary };
 }

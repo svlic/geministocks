@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ModelConfig } from '../gateway/index';
+import { IngestionError } from '../ingestion/types';
 const page = vi.hoisted(() => vi.fn());
 vi.mock('../ingestion/website', async importOriginal => ({ ...await importOriginal<typeof import('../ingestion/website')>(), fetchPublicPage: page }));
 import { discoverPublicEvidence } from './public-search';
@@ -32,25 +33,74 @@ it('uses the research model key and only the public origin; retrieves cited page
   expect(JSON.stringify(result)).not.toMatch(/SECRET|invented|private-key|UNVERIFIED-MODEL-SUMMARY/);
 });
 
-it('skips unsafe/inaccessible results, deduplicates URLs and bounds retrieval to six candidates', async () => {
+it('skips unsafe/inaccessible results, deduplicates URLs and retains at most six readable pages', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([
     'https://127.0.0.1/private', 'https://example.org/a', 'https://example.org/a',
     ...['b', 'c', 'd', 'e', 'f', 'g'].map(path => `https://news.example.org/${path}`),
   ])));
   page.mockImplementation(async (url: string) => { if (url.endsWith('/a')) throw new Error('blocked');return { url, title: 'Public', text: 'Retrieved evidence' }; });
   const result = await discoverPublicEvidence('https://example.org', config, signal());
-  expect(result.evidence.map(e => e.url)).toEqual(['b', 'c', 'd', 'e', 'f'].map(path => `https://news.example.org/${path}`));
+  expect(result.evidence.map(e => e.url)).toEqual(['b', 'c', 'd', 'e', 'f', 'g'].map(path => `https://news.example.org/${path}`));
   expect(result.limitations.join(' ')).toContain('search_source_unreadable');
 });
 
 it('discloses inaccessible Twitter originals without turning the model summary into evidence', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(['https://x.com/example/status/123'])));
-  page.mockRejectedValue(new Error('robots_disallowed'));
+  page.mockRejectedValue(new IngestionError('robots_disallowed', 'Blocked by site rules.'));
   const result = await discoverPublicEvidence('https://example.org', config, signal());
   expect(result).toMatchObject({ searchUsed: true, xSearchUsed: true, evidence: [] });
   expect(result.limitations.join(' ')).toContain('twitter_source_unreadable');
   expect(result.limitations.join(' ')).toContain('public_search_no_evidence');
   expect(JSON.stringify(result)).not.toContain('UNVERIFIED-MODEL-SUMMARY');
+});
+
+it('uses backup sources after six failures and reports safe reasons without leaking error details', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([
+    ...Array.from({ length: 6 }, (_, i) => `https://blocked.example/${i}`),
+    'https://news.example/company', 'https://x.com/example/status/123',
+  ])));
+  page.mockImplementation(async (url: string) => {
+    if (url.includes('blocked.example') || url.includes('x.com')) {
+      throw new IngestionError('robots_disallowed', 'SENSITIVE-UPSTREAM-BODY');
+    }
+    return { url, title: 'Public', text: 'Actually retrieved backup evidence' };
+  });
+  const result = await discoverPublicEvidence('https://example.org', config, signal());
+  expect(result.evidence.map(e => e.url)).toEqual(['https://news.example/company']);
+  expect(result.limitations.join(' ')).toContain('robots_disallowed');
+  expect(result.limitations.join(' ')).toContain('twitter_source_unreadable');
+  expect(result.limitations.join(' ')).not.toContain('twitter_search_no_sources');
+  expect(JSON.stringify(result)).not.toContain('SENSITIVE-UPSTREAM-BODY');
+});
+
+it('reads another host before a slow first source exhausts the discovery deadline', async () => {
+  const deadline = new AbortController();
+  const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const spy = vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => ms === 120_000 ? deadline.signal : nativeTimeout(ms));
+  try {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(['https://x.com/example/status/123', 'https://news.example/company'])));
+    page.mockImplementation(async (url: string, signal: AbortSignal) => {
+      signal.throwIfAborted();
+      if (url.includes('news.example')) return { url, title: 'Public', text: 'Retrieved before the deadline' };
+      await new Promise(resolve => setTimeout(resolve, 20));
+      deadline.abort();signal.throwIfAborted();
+    });
+    const result = await discoverPublicEvidence('https://example.org', config, signal());
+    expect(result.evidence.map(e => e.url)).toEqual(['https://news.example/company']);
+    expect(result.limitations.join(' ')).toContain('public_search_time_limit');
+    expect(result.limitations.join(' ')).not.toContain('public_search_no_evidence');
+  } finally { spy.mockRestore(); }
+});
+
+it('stops after twelve candidates even when later candidates could be readable', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(Array.from({ length: 13 }, (_, i) => `https://news.example/${i + 1}`))));
+  page.mockImplementation(async (url: string) => {
+    if (!url.endsWith('/13')) throw new IngestionError('site_http_error', 'Inaccessible.');
+    return { url, title: 'Beyond budget', text: 'Must not be retrieved' };
+  });
+  const result = await discoverPublicEvidence('https://example.org', config, signal());
+  expect(result.evidence).toEqual([]);
+  expect(result.limitations.join(' ')).toContain('news.example: site_http_error ×12');
 });
 
 it('distinguishes Twitter-targeted search from retrieved Twitter content when only website sources are cited', async () => {
@@ -60,6 +110,7 @@ it('distinguishes Twitter-targeted search from retrieved Twitter content when on
   expect(result).toMatchObject({ searchUsed: true, xSearchUsed: true });
   expect(result.evidence.map(e => e.url)).toEqual(['https://example.org/about']);
   expect(result.limitations.join(' ')).toContain('twitter_search_no_evidence');
+  expect(result.limitations.join(' ')).toContain('twitter_search_no_sources');
   expect(result.limitations.join(' ')).not.toContain('public_search_no_evidence');
 });
 
@@ -82,7 +133,7 @@ it('discloses a completed search without readable sources rather than inventing 
 it('propagates unsupported search safely without falling back to another service', async () => {
   const fetcher = vi.fn().mockResolvedValue(new Response('SECRET-UPSTREAM', { status: 400 }));vi.stubGlobal('fetch', fetcher);
   await expect(discoverPublicEvidence('https://example.org', config, signal())).rejects.toMatchObject({ code: 'unsupported_request' });
-  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 it('propagates cancellation during source retrieval', async () => {

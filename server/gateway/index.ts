@@ -78,13 +78,19 @@ export async function callModel(config: ModelConfig, request: ModelRequest): Pro
   const timeout = AbortSignal.timeout(config.timeoutMs);
   const signal = request.signal ? AbortSignal.any([timeout, request.signal]) : timeout;
   const aborted = () => { if (request.signal?.aborted) throw new GatewayError('cancelled'); if (timeout.aborted) throw new GatewayError('timeout', true); };
+  let includeSources = request.webSearch === true;
   // The timeout covers both attempts, response bytes and retry delay together.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       aborted();
-      const response = await withAbort(fetch(url, { method: 'POST', headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal, redirect: 'error' }), signal);
+      const response = await withAbort(fetch(url, { method: 'POST', headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify({ ...body, ...(includeSources ? { include: ['web_search_call.action.sources'] } : {}) }), signal, redirect: 'error' }), signal);
       if (!response.ok) {
         void response.body?.cancel().catch(() => {});
+        // Some compatible relays reject optional Responses source expansion. Retry
+        // only an explicit rejection, retaining the required tool and original budget.
+        if (includeSources && attempt === 0 && [400, 422].includes(response.status)) {
+          includeSources = false; continue;
+        }
         const error = httpError(response.status);
         if (error.retryable && attempt === 0) {
           await new Promise<void>((resolve, reject) => {
@@ -114,14 +120,18 @@ export async function callModel(config: ModelConfig, request: ModelRequest): Pro
         const text = parts.map(part => typeof part.text === 'string' ? part.text : '').join('\n');
         if (!text.trim()) throw new GatewayError('invalid_response');
         const citations: ModelResult['citations'] = [];
-        if (searchUsed) for (const annotation of parts.flatMap(part => array(part.annotations).map(object))) {
-          if (annotation.type !== 'url_citation' || typeof annotation.url !== 'string') continue;
+        const candidates = [
+          ...parts.flatMap(part => array(part.annotations).map(object)).filter(item => item.type === 'url_citation'),
+          ...searches.flatMap(item => array(object(item.action).sources).map(object)).filter(item => item.type === 'url'),
+        ];
+        if (searchUsed) for (const candidate of candidates) {
+          if (typeof candidate.url !== 'string') continue;
           try {
-            const source = new URL(annotation.url);
+            const source = new URL(candidate.url);
             if (source.protocol !== 'https:' || source.username || source.password || source.port && source.port !== '443') continue;
             source.hash = '';
             if (citations.length >= 24 || citations.some(c => c.url === source.href)) continue;
-            citations.push({ url: source.href, title: typeof annotation.title === 'string' ? annotation.title.slice(0, 300) : source.hostname });
+            citations.push({ url: source.href, title: typeof candidate.title === 'string' ? candidate.title.slice(0, 300) : source.hostname });
           } catch { /* Invalid citations are not discovery candidates. */ }
         }
         return { text, citations, usage: data.usage ?? null, searchUsed, xSearchUsed, elapsedMs: Math.round(performance.now() - started) };
